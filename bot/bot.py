@@ -1,6 +1,7 @@
 """
 Handlers del bot de Telegram.
 """
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +38,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text("Procesando tu solicitud...")
 
     try:
-        req = parse_request(text)
+        req = await asyncio.to_thread(parse_request, text)
     except ValueError as e:
         await update.message.reply_text(
             f"No entendí tu solicitud: {e}\n\n{_HELP}"
@@ -61,7 +62,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     try:
-        candidates = scrape_businesses(
+        candidates = await asyncio.to_thread(
+            scrape_businesses,
             business_type=business_type,
             zone=zone,
             max_results=quantity + 30,
@@ -73,8 +75,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # ── 3. Deduplicación ──────────────────────────────────────────────────────
-    new_businesses = filter_new(candidates)
-    already_count  = count_sent(zone, business_type)
+    new_businesses = await asyncio.to_thread(filter_new, candidates)
+    already_count  = await asyncio.to_thread(count_sent, zone, business_type)
 
     if len(new_businesses) == 0:
         msg = (
@@ -96,7 +98,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # ── 4. Guardar en Supabase ────────────────────────────────────────────────
     try:
-        save(to_send)
+        await asyncio.to_thread(save, to_send)
     except Exception as e:
         logger.error("Error guardando en Supabase: %s", e)
         # No interrumpimos: generamos el PDF igualmente
@@ -108,7 +110,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     pdf_path  = PDF_OUTPUT_DIR / f"leads_{safe_zone}_{safe_type}_{timestamp}.pdf"
 
     try:
-        generate_pdf(
+        await asyncio.to_thread(
+            generate_pdf,
             businesses=to_send,
             business_type=business_type,
             zone=zone,
