@@ -30,6 +30,8 @@ def _run_actor(run_input: dict) -> list[dict]:
                 headers=HEADERS,
                 params={"limit": 500, "clean": "true", "format": "json"},
             ).json()
+            if not isinstance(items, list):
+                raise RuntimeError(f"Respuesta inesperada de Apify dataset: {str(items)[:200]}")
             return items
         if status in ("FAILED", "ABORTED", "TIMED-OUT"):
             raise RuntimeError(f"Apify terminó con estado: {status}")

@@ -75,8 +75,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # ── 3. Deduplicación ──────────────────────────────────────────────────────
-    new_businesses = await asyncio.to_thread(filter_new, candidates)
-    already_count  = await asyncio.to_thread(count_sent, zone, business_type)
+    try:
+        new_businesses = await asyncio.to_thread(filter_new, candidates)
+    except Exception as e:
+        logger.error("Error en filter_new: %s", e)
+        await update.message.reply_text(f"Error al consultar la base de datos: {e}")
+        return
+
+    try:
+        already_count = await asyncio.to_thread(count_sent, zone, business_type)
+    except Exception as e:
+        logger.error("Error en count_sent: %s", e)
+        already_count = 0
 
     if len(new_businesses) == 0:
         msg = (
@@ -128,13 +138,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"{len(to_send)} {business_type} en {zone} — "
         f"{datetime.now().strftime('%d/%m/%Y')}"
     )
-    with open(pdf_path, "rb") as f:
-        await context.bot.send_document(
-            chat_id=chat_id,
-            document=f,
-            filename=pdf_path.name,
-            caption=caption,
-        )
+    try:
+        with open(pdf_path, "rb") as f:
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=f,
+                filename=pdf_path.name,
+                caption=caption,
+            )
+    except Exception as e:
+        logger.error("Error enviando PDF: %s", e)
+        await update.message.reply_text(f"PDF generado pero error al enviarlo: {e}")
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
