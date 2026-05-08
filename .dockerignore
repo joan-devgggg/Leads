@@ -1,0 +1,9 @@
+bot/.env
+bot/output/
+__pycache__/
+*.pyc
+*.pdf
+*_raw.json
+.git
+.claude
+.mcp.json
