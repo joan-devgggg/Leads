@@ -1,16 +1,42 @@
 """
 Wrapper de Apify Google Maps Scraper, generalizado desde scrape_clinicas_dubai.py.
 """
-import time
 import logging
+import time
+import unicodedata
+import re
+from dataclasses import dataclass
+from itertools import product
+
 import requests
 from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS, HTTP_TIMEOUT_SECS
-from geo_utils import extract_geo_fields, geo_match_reason, parse_target_location
+from geo_utils import build_geo_plan, extract_geo_fields, geo_match_reason, plan_to_points, resolve_geo_target
+from planner import build_adaptive_plan
+from search_budget import SearchBudget
 
 BASE_URL = "https://api.apify.com/v2"
 HEADERS  = {"Authorization": f"Bearer {APIFY_API_TOKEN}"}
 
 logger = logging.getLogger(__name__)
+
+SEARCH_KEYWORDS = [
+    "aesthetic clinic",
+    "beauty clinic",
+    "cosmetic clinic",
+    "dermatology clinic",
+    "laser clinic",
+    "plastic surgery clinic",
+    "skin clinic",
+    "medical spa",
+]
+
+
+@dataclass(frozen=True)
+class SearchPoint:
+    name: str
+    latitude: float
+    longitude: float
+    radius: int
 
 
 def _log_response(label: str, response: requests.Response) -> None:
@@ -74,25 +100,89 @@ def _run_actor(run_input: dict) -> list[dict]:
             dataset_id = s.get("defaultDatasetId")
             if not dataset_id:
                 raise RuntimeError(f"Apify no devolvió defaultDatasetId en {status_url}: {s_payload}")
-            dataset_url = f"{BASE_URL}/datasets/{dataset_id}/items"
-            logger.info("Apify GET %s", dataset_url)
-            items_resp = requests.get(
-                dataset_url,
-                headers=HEADERS,
-                params={"limit": 500, "clean": "true", "format": "json"},
-                timeout=HTTP_TIMEOUT_SECS,
-            )
-            _log_response("Apify dataset items", items_resp)
-            items_resp.raise_for_status()
-            items = _safe_json(items_resp, "Apify dataset items")
-            if not isinstance(items, list):
-                raise RuntimeError(f"Respuesta inesperada de Apify dataset: {str(items)[:200]}")
-            logger.info("Apify dataset items count=%s dataset_id=%s", len(items), dataset_id)
-            return items
+            return _fetch_dataset_items(dataset_id)
         if status in ("FAILED", "ABORTED", "TIMED-OUT"):
             raise RuntimeError(f"Apify terminó con estado: {status}")
         time.sleep(5)
     raise TimeoutError("El actor de Apify no terminó a tiempo.")
+
+
+def _fetch_dataset_items(dataset_id: str) -> list[dict]:
+    items: list[dict] = []
+    offset = 0
+    limit = 100
+
+    while True:
+        dataset_url = f"{BASE_URL}/datasets/{dataset_id}/items"
+        logger.info("Apify GET %s offset=%s limit=%s", dataset_url, offset, limit)
+        items_resp = requests.get(
+            dataset_url,
+            headers=HEADERS,
+            params={"limit": limit, "offset": offset, "clean": "true", "format": "json"},
+            timeout=HTTP_TIMEOUT_SECS,
+        )
+        _log_response("Apify dataset items", items_resp)
+        items_resp.raise_for_status()
+        page_items = _safe_json(items_resp, "Apify dataset items")
+        if not isinstance(page_items, list):
+            raise RuntimeError(f"Respuesta inesperada de Apify dataset: {str(page_items)[:200]}")
+
+        logger.info("dataset_page_received | dataset_id=%s | offset=%s | received=%s", dataset_id, offset, len(page_items))
+        items.extend(page_items)
+        if len(page_items) < limit:
+            break
+        offset += limit
+
+    logger.info("Apify dataset items count=%s dataset_id=%s", len(items), dataset_id)
+    return items
+
+
+def _detect_next_page_token(payload: dict | list) -> str:
+    if isinstance(payload, dict):
+        token = payload.get("next_page_token") or payload.get("nextPageToken")
+        if token:
+            return str(token)
+    return ""
+
+
+def _normalize_text(value: str) -> str:
+    value = unicodedata.normalize("NFKD", value or "")
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", value.lower()).strip()
+
+
+def _normalize_phone_for_dedupe(raw: str) -> str:
+    if not raw:
+        return ""
+    digits = re.sub(r"\D+", "", raw)
+    if digits.startswith("00"):
+        digits = digits[2:]
+    return digits
+
+
+def _normalize_website_for_dedupe(raw: str) -> str:
+    if not raw:
+        return ""
+    value = _normalize_text(raw)
+    value = re.sub(r"^https?://", "", value)
+    value = re.sub(r"^www\.", "", value)
+    return value.rstrip("/")
+
+
+def _normalized_name(item: dict) -> str:
+    return _normalize_text(item.get("title") or item.get("name") or "")
+
+
+def _normalized_phone(item: dict) -> str:
+    return _normalize_phone_for_dedupe(item.get("phone") or item.get("phoneUnformatted") or "")
+
+
+def _normalized_website(item: dict) -> str:
+    return _normalize_website_for_dedupe(item.get("website") or "")
+
+
+def _dedupe_key(item: dict) -> tuple[str, str, str]:
+    return (_normalized_name(item), _normalized_phone(item), _normalized_website(item))
 
 
 def _normalize_phone(raw: str, phone_prefix: str) -> str:
@@ -105,90 +195,178 @@ def _normalize_phone(raw: str, phone_prefix: str) -> str:
     return cleaned
 
 
-def scrape_businesses(business_type: str, zone: str, max_results: int, phone_prefix: str = "") -> list[dict]:
+def _build_run_plan(business_type: str, zone_query: str, target: dict, requested_count: int, budget: SearchBudget) -> list[dict]:
+    adaptive = build_adaptive_plan(zone_query, requested_count, budget=budget)
+    if adaptive:
+        points = [step["coord"] for step in adaptive]
+    else:
+        plan = build_geo_plan(zone_query, requested_count)
+        points = plan_to_points(plan)
+    points = points[:max(1, budget.max_zones)]
+    keywords = SEARCH_KEYWORDS if target.get("city_norm") == "dubai" else [business_type, f"best {business_type}", f"aesthetic {business_type}"]
+    run_plan = [
+        {
+            "keyword": keyword,
+            "coord": coord,
+            "search_string": f"{keyword} in {zone_query} near {coord.latitude},{coord.longitude}",
+        }
+        for keyword, coord in product(keywords, points)
+    ]
+    if not run_plan:
+        run_plan = [{"keyword": keyword, "coord": None, "search_string": f"{keyword} in {zone_query}"} for keyword in keywords]
+    logger.info("[GEO] input=%s detected_type=%s subzones_generated=%s", zone_query, target.get("kind"), len(points))
+    logger.info("[EXPANSION] subzones_generated=%s", len(points))
+    return run_plan
+
+
+def scrape_businesses(business_type: str, zone: str, requested_count: int, phone_prefix: str = "") -> list[dict]:
     """
     Busca negocios en Google Maps vía Apify.
     Devuelve lista normalizada con place_id, name, phone, address, zone,
     business_type, website, rating, reviews_count.
     """
-    target = parse_target_location(zone)
-    zone_query = target["raw"]
-    if target["city"] and target["country"]:
-        zone_query = f"{target['city']}, {target['country']}"
+    try:
+        target = resolve_geo_target(zone)
+    except Exception:
+        logger.exception("[STOP] reason=geocoding_failure")
+        target = {"raw": zone, "display_name": zone, "kind": "small_city", "city_norm": zone.lower(), "center": None, "bounds": [], "country_norm": "", "city_type": "medium_city"}
+    zone_query = target.get("display_name") or target["raw"]
 
-    per_search = max(20, (max_results + 10) // 2)
-    run_input = {
-        "searchStringsArray": [
-            f"{business_type} in {zone_query}",
-            f"{business_type} in {target['city']}, {target['country']}" if target["country"] else f"{business_type} in {target['city']}",
-            f"best {business_type} in {zone_query}",
-        ],
-        "maxCrawledPlacesPerSearch": per_search,
-        "language": "en",
-        "maxImages": 0,
-        "maxReviews": 0,
-        "exportPlaceUrls": False,
-        "additionalInfo": False,
-        "includeWebResults": False,
-    }
+    budget = SearchBudget.for_request(requested_count)
+    run_plan = _build_run_plan(business_type, zone_query, target, requested_count, budget)
 
-    raw = _run_actor(run_input)
-
-    seen_ids = set()
-    discarded_location = 0
+    seen_keys = set()
     results = []
-    for p in raw:
-        place_id = (p.get("placeId") or "").strip()
-        name = (p.get("title") or "").strip()
-        if not place_id or not name or place_id in seen_ids:
-            continue
-        seen_ids.add(place_id)
+    total_raw = 0
+    discarded_location = 0
+    discarded_duplicates = 0
+    discarded_missing_name = 0
+    discarded_invalid_coords = 0
+    pages_visited = 0
 
-        accepted, reason = geo_match_reason(p, target)
-        if not accepted:
-            discarded_location += 1
-            logger.info(
-                "rejected_geo | result=%s | place_id=%s | name=%s | target=%s | geo=%s",
-                reason,
-                place_id,
-                name,
-                zone,
-                extract_geo_fields(p),
-            )
-            continue
+    for index, step in enumerate(run_plan, start=1):
+        if not budget.allow_zone():
+            break
+        if not budget.start_zone():
+            break
+        search_string = step["search_string"]
+        coord = step.get("coord")
+        radius = coord.radius if coord else None
 
-        phone_raw = p.get("phone") or p.get("phoneUnformatted") or ""
-        geo = extract_geo_fields(p)
-        results.append({
-            "place_id":      place_id,
-            "name":          name,
-            "phone":         _normalize_phone(phone_raw, phone_prefix),
-            "address":       geo["address"],
-            "formatted_address": geo["formatted_address"],
-            "city":          geo["city"],
-            "country":       geo["country"],
-            "latitude":      geo["lat"],
-            "longitude":     geo["lng"],
-            "zone":          zone,
-            "business_type": business_type.lower(),
-            "website":       (p.get("website") or "").strip(),
-            "rating":        p.get("totalScore") or None,
-            "reviews_count": p.get("reviewsCount") or 0,
-        })
-        logger.info(
-            "accepted_geo | result=%s | place_id=%s | name=%s | target=%s | geo=%s",
-            reason,
-            place_id,
-            name,
-            zone,
-            geo,
-        )
+        next_page_token = ""
+        page = 0
+        while True:
+            if len(results) >= requested_count or budget.should_stop():
+                break
+            if not budget.allow_page(page):
+                break
+            page += 1
+            pages_visited += 1
+            logger.info("[SEARCH] keyword=%s coord=%s radius=%s page=%s results_received=%s", step.get("keyword"), coord.name if coord else "", radius, page, 0)
+            logger.info("[ZONE] searching=%s", coord.name if coord else zone_query)
+            payload = {
+                "searchStringsArray": [search_string],
+                "maxCrawledPlacesPerSearch": 100,
+                "language": "en",
+                "maxImages": 0,
+                "maxReviews": 0,
+                "exportPlaceUrls": False,
+                "additionalInfo": False,
+                "includeWebResults": False,
+            }
+            if next_page_token:
+                payload["nextPageToken"] = next_page_token
+            try:
+                raw = _run_actor(payload)
+            except Exception:
+                logger.exception("[STOP] reason=provider_failure")
+                budget.stop_reason = budget.stop_reason or "provider_failure"
+                break
+            budget.record_request(len(raw))
+            total_raw += len(raw)
+            logger.info("[SEARCH] keyword=%s coord=%s radius=%s page=%s results_received=%s", step.get("keyword"), coord.name if coord else "", radius, page, len(raw))
 
+            before = len(raw)
+            page_kept = 0
+            for p in raw:
+                place_id = (p.get("placeId") or "").strip()
+                name = (p.get("title") or p.get("name") or "").strip()
+                geo = extract_geo_fields(p)
+                lat = geo.get("lat")
+                lng = geo.get("lng")
+                if not name:
+                    discarded_missing_name += 1
+                    continue
+                if lat is not None and lng is not None:
+                    try:
+                        float(lat); float(lng)
+                    except (TypeError, ValueError):
+                        discarded_invalid_coords += 1
+                        continue
+                if not place_id:
+                    place_id = f"{_normalized_name(p)}|{_normalized_phone(p)}|{_normalized_website(p)}"
+                key = _dedupe_key(p)
+                if key in seen_keys:
+                    discarded_duplicates += 1
+                    continue
+                accepted, reason = geo_match_reason(p, target)
+                if not accepted:
+                    discarded_location += 1
+                    continue
+                seen_keys.add(key)
+                phone_raw = p.get("phone") or p.get("phoneUnformatted") or ""
+                results.append({
+                    "place_id": place_id,
+                    "name": name,
+                    "phone": _normalize_phone(phone_raw, phone_prefix),
+                    "address": geo["address"],
+                    "formatted_address": geo["formatted_address"],
+                    "city": geo["city"],
+                    "country": geo["country"],
+                    "latitude": geo["lat"],
+                    "longitude": geo["lng"],
+                    "zone": zone,
+                    "business_type": business_type.lower(),
+                    "website": (p.get("website") or "").strip(),
+                    "rating": p.get("totalScore") or None,
+                    "reviews_count": p.get("reviewsCount") or 0,
+                })
+                page_kept += 1
+
+            token = _detect_next_page_token(raw[0] if raw else {})
+            logger.info("[PAGINATION] next_page_token=%s", bool(token))
+            logger.info("[FILTER] discarded_missing_name=%s discarded_invalid_coords=%s", discarded_missing_name, discarded_invalid_coords)
+            logger.info("[DEDUPE] before=%s after=%s duplicates_removed=%s", before, page_kept, discarded_duplicates)
+            logger.info("[PROGRESS] total_accumulated=%s requested=%s", len(results), requested_count)
+
+            if not token:
+                budget.finish_zone(page_kept)
+                break
+            next_page_token = token
+            time.sleep(2)
+
+            if budget.early_stop_for_low_density():
+                break
+
+        logger.info("[COVERAGE] searched_zones=%s/%s", index, len(run_plan))
+        budget.finish_zone(page_kept)
+
+        if len(results) >= requested_count:
+            break
+        if budget.should_stop():
+            break
+
+    budget.log_metrics()
+    if budget.stop_reason:
+        logger.info("[STOP] reason=%s", budget.stop_reason)
     logger.info(
-        "Filtered by location | target=%s | raw=%s | kept=%s | discarded_location=%s",
-        zone,
-        len(raw),
+        "[SUMMARY] total_raw=%s total_after_dedupe=%s duplicates_discarded=%s keywords_used=%s coordinates_used=%s pages_visited=%s completed_pct=%.2f",
+        total_raw,
         len(results),
-        discarded_location,
+        discarded_duplicates,
+        ",".join(SEARCH_KEYWORDS if target["city_norm"] == "dubai" else [business_type, f"best {business_type}", f"aesthetic {business_type}"]),
+        ",".join(step["coord"].name for step in run_plan if step.get("coord")),
+        pages_visited,
+        min(100.0, (len(results) / requested_count * 100.0) if requested_count else 0.0),
     )
     return results

@@ -65,11 +65,20 @@ def run_actor_and_wait(actor_id: str, run_input: dict, timeout: int = 480) -> li
             print()
             dataset_id = s["defaultDatasetId"]
             print(f"   Dataset: {dataset_id}")
-            items = requests.get(
-                f"{BASE_URL}/datasets/{dataset_id}/items",
-                headers=HEADERS,
-                params={"limit": 200, "clean": "true", "format": "json"},
-            ).json()
+            items = []
+            offset = 0
+            limit = 100
+            while True:
+                page = requests.get(
+                    f"{BASE_URL}/datasets/{dataset_id}/items",
+                    headers=HEADERS,
+                    params={"limit": limit, "offset": offset, "clean": "true", "format": "json"},
+                ).json()
+                print(f"   Página recibida: offset={offset} items={len(page)}")
+                items.extend(page)
+                if len(page) < limit:
+                    break
+                offset += limit
             return items
         if status in ("FAILED", "ABORTED", "TIMED-OUT"):
             raise RuntimeError(f"Actor terminó con estado: {status}")
@@ -110,8 +119,6 @@ def parse_clinics(raw: list[dict]) -> list[dict]:
             "categoria":   (p.get("categoryName") or "").strip(),
             "google_maps": (p.get("url") or "").strip(),
         })
-        if len(clinics) >= 50:
-            break
 
     return clinics
 

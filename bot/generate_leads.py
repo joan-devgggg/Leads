@@ -46,7 +46,7 @@ def generate_leads_for_zone(business_type: str, zone: str, quantity: int, phone_
     candidates = scrape_businesses(
         business_type=req["business_type"],
         zone=req["zone"],
-        max_results=req["quantity"] + 30,
+        requested_count=req["quantity"],
         phone_prefix=req["phone_prefix"],
     )
     print(f"   ✓ Encontrados: {len(candidates)} candidatos")

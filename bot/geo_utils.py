@@ -1,8 +1,26 @@
 """
-Utilidades para normalización y filtrado geográfico inteligente.
+Utilidades para resolución y expansión geográfica global.
 """
+from __future__ import annotations
+
+import json
+import logging
+import math
 import re
 import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+
+import requests
+
+from state_store import cache_get, cache_set, acquire
+
+logger = logging.getLogger(__name__)
+
+_CACHE_PATH = Path(__file__).with_name("geo_cache.json")
+_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+_NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
+_HEADERS = {"User-Agent": "LeadsBot/1.0 (geo resolver)"}
 
 
 _COUNTRY_ALIASES = {
@@ -136,6 +154,56 @@ _CITY_CLASS_ALIASES = {
     "small_city": set(),
 }
 
+_TYPE_PRIORITY = {
+    "country": 5,
+    "region": 4,
+    "state": 4,
+    "province": 4,
+    "metro_area": 3,
+    "mega_city": 3,
+    "medium_city": 2,
+    "small_city": 1,
+}
+
+
+@dataclass(frozen=True)
+class SearchPoint:
+    name: str
+    latitude: float
+    longitude: float
+    radius: int
+
+
+def _load_cache() -> dict:
+    if not _CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(_CACHE_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def _save_cache(cache: dict) -> None:
+    try:
+        _CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=True, indent=2, sort_keys=True))
+    except Exception:
+        logger.exception("No se pudo guardar cache geográfica")
+
+
+def _cache_get(key: str):
+    value = cache_get(key)
+    if value is not None:
+        logger.info("[CACHE] cache_hit=true key=%s", key)
+        return value
+    return _load_cache().get(key)
+
+
+def _cache_set(key: str, value: dict) -> None:
+    cache_set(key, value)
+    cache = _load_cache()
+    cache[key] = value
+    _save_cache(cache)
+
 
 def _norm(text: str) -> str:
     text = unicodedata.normalize("NFKD", text or "")
@@ -176,6 +244,173 @@ def classify_city_type(city: str) -> str:
     if any(token in city_norm for token in ("metropolitan", "metro", "city")):
         return "medium_city"
     return "medium_city"
+
+
+def classify_zone_kind(name: str, osm_class: str = "", osm_type: str = "") -> str:
+    n = _norm(name)
+    c = _norm(osm_class)
+    t = _norm(osm_type)
+    if c == "boundary" and t == "administrative":
+        if any(x in n for x in ("spain", "argentina", "france", "italy", "portugal", "united states")):
+            return "country"
+        if any(x in n for x in ("state", "province", "region", "autonomous", "community", "county")):
+            return "region"
+        return "province"
+    if c in {"place", "boundary"}:
+        if any(x in n for x in ("metro", "metropolitan")):
+            return "metro_area"
+        if any(x in n for x in ("city", "town", "municipality")):
+            return "medium_city"
+        return "small_city"
+    return "small_city"
+
+
+def _bbox_center(bounds: list[float]) -> tuple[float, float]:
+    south, north, west, east = bounds
+    return ((float(south) + float(north)) / 2.0, (float(west) + float(east)) / 2.0)
+
+
+def _bbox_to_grid(bounds: list[float], density: int, *, max_points: int = 16) -> list[SearchPoint]:
+    south, north, west, east = [float(x) for x in bounds]
+    rows = cols = max(1, density)
+    lat_step = (north - south) / rows
+    lng_step = (east - west) / cols
+    points = []
+    for r in range(rows):
+        for c in range(cols):
+            lat = south + (r + 0.5) * lat_step
+            lng = west + (c + 0.5) * lng_step
+            radius = int(max(1500, min(12000, 2200 + max(north - south, east - west) * 110000)))
+            points.append(SearchPoint(f"grid_{r+1}_{c+1}", round(lat, 6), round(lng, 6), radius))
+            if len(points) >= max_points:
+                return points
+    return points
+
+
+def _dedupe_points(points: list[SearchPoint]) -> list[SearchPoint]:
+    seen = set()
+    out = []
+    for point in points:
+        key = (round(point.latitude, 4), round(point.longitude, 4), point.radius)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(point)
+    return out
+
+
+def resolve_geo_target(zone: str) -> dict:
+    raw = (zone or "").strip()
+    cached = _cache_get(f"resolve::{_norm(raw)}")
+    if cached:
+        return cached
+
+    params = {
+        "q": raw,
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "limit": 5,
+    }
+    acquire("nominatim", 1.1)
+    response = requests.get(_NOMINATIM_URL, params=params, headers=_HEADERS, timeout=20)
+    response.raise_for_status()
+    items = response.json() if response.text.strip() else []
+    if not items:
+        target = parse_target_location(raw)
+        target.update({"display_name": raw, "kind": "small_city", "bounds": [], "center": None, "coordinates": []})
+        return target
+
+    item = items[0]
+    address = item.get("address") or {}
+    kind = classify_zone_kind(item.get("display_name") or raw, item.get("class") or "", item.get("type") or "")
+    bbox = [float(v) for v in (item.get("boundingbox") or [])]
+    center = (float(item.get("lat")), float(item.get("lon"))) if item.get("lat") and item.get("lon") else None
+    target = parse_target_location(raw)
+    target.update({
+        "display_name": item.get("display_name") or raw,
+        "kind": kind,
+        "osm_class": item.get("class") or "",
+        "osm_type": item.get("type") or "",
+        "bounds": bbox,
+        "center": center,
+        "address": address,
+    })
+    _cache_set(f"resolve::{_norm(raw)}", target)
+    return target
+
+
+def _nearby_subzones(target: dict, count_hint: int, *, max_points: int = 10) -> list[dict]:
+    bounds = target.get("bounds") or []
+    if len(bounds) != 4:
+        return []
+    south, north, west, east = [float(v) for v in bounds]
+    viewbox = f"{west},{north},{east},{south}"
+    params = {
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "q": target.get("raw", ""),
+        "bounded": 1,
+        "viewbox": viewbox,
+        "limit": max(5, min(max_points, max(10, min(40, count_hint // 10 + 10)))),
+    }
+    try:
+        acquire("nominatim", 1.1)
+        response = requests.get(_NOMINATIM_URL, params=params, headers=_HEADERS, timeout=20)
+        response.raise_for_status()
+        items = response.json() if response.text.strip() else []
+    except Exception:
+        return []
+
+    subzones = []
+    for item in items[:max_points]:
+        name = item.get("display_name", "")
+        if not name:
+            continue
+        subzones.append({
+            "name": name.split(",")[0],
+            "latitude": float(item.get("lat", 0.0)),
+            "longitude": float(item.get("lon", 0.0)),
+            "radius": 3500,
+            "kind": classify_zone_kind(name, item.get("class") or "", item.get("type") or ""),
+        })
+    return subzones
+
+
+def build_geo_plan(zone: str, requested_count: int) -> dict:
+    target = resolve_geo_target(zone)
+    kind = target.get("kind") or "small_city"
+    center = target.get("center")
+    bounds = target.get("bounds") or []
+
+    points: list[SearchPoint] = []
+    if center:
+        lat, lng = center
+        base_radius = 2500 if kind in {"small_city", "medium_city"} else 4000
+        points.append(SearchPoint(target.get("display_name", target["raw"]), lat, lng, base_radius))
+
+    if len(bounds) == 4:
+        size = max(bounds[1] - bounds[0], bounds[3] - bounds[2])
+        if kind == "country" or requested_count >= 500:
+            density = 4 if size > 10 else 3
+        elif kind in {"region", "state", "province"} or requested_count >= 100:
+            density = 3 if size > 2 else 2
+        elif kind in {"metro_area", "mega_city"}:
+            density = 3
+        else:
+            density = 2
+        points.extend(_bbox_to_grid(bounds, density, max_points=16 if requested_count < 500 else 25))
+
+    if kind in {"medium_city", "mega_city", "metro_area"}:
+        points.extend(_nearby_subzones(target, requested_count, max_points=12 if requested_count < 500 else 20))
+
+    points = _dedupe_points(points)
+    if requested_count >= 5000 and len(points) < 25 and len(bounds) == 4:
+        points.extend(_bbox_to_grid(bounds, 5, max_points=25))
+        points = _dedupe_points(points)
+
+    cache_value = {"target": target, "points": [point.__dict__ for point in points]}
+    _cache_set(f"plan::{_norm(zone)}::{requested_count}", cache_value)
+    return cache_value
 
 
 def extract_geo_fields(item: dict) -> dict:
@@ -321,3 +556,7 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
 
 def location_matches_target(item: dict, target: dict) -> bool:
     return geo_match_reason(item, target)[0]
+
+
+def plan_to_points(plan: dict) -> list[SearchPoint]:
+    return [SearchPoint(**point) for point in plan.get("points", [])]

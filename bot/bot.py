@@ -58,8 +58,8 @@ _HELP = (
     "Envíame un mensaje indicando cuántos negocios quieres y de qué zona.\n\n"
     "Ejemplos:\n"
     "• Dame 50 clínicas estéticas de Dubai\n"
-    "• Envíame 20 restaurantes en Barcelona\n"
-    "• Quiero 30 peluquerías en París\n\n"
+    "• Envíame 20 restaurantes en Valencia\n"
+    "• Quiero 30 peluquerías en California\n\n"
     "Recibirás un PDF con guía comercial de automatización e IA + listado + hoja de seguimiento."
 )
 
@@ -105,7 +105,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 scrape_businesses,
                 business_type=business_type,
                 zone=zone,
-                max_results=quantity + 30,
+                requested_count=quantity,
                 phone_prefix=phone_prefix,
             )
             _mark(job_id, "scrape", scrape_started)
