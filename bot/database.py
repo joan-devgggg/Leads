@@ -3,6 +3,8 @@ Operaciones de Supabase: filtrar duplicados y guardar negocios enviados.
 """
 from supabase import create_client
 from config import SUPABASE_URL, SUPABASE_KEY
+import unicodedata
+import re
 
 _client = None
 
@@ -18,6 +20,12 @@ def _with_timeout(query, timeout_secs: float = 45):
         return query.execute(timeout=timeout_secs)
     except TypeError:
         return query.execute()
+
+
+def _normalize_text(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", text.lower()).strip()
 
 
 def filter_new(candidates: list[dict]) -> list[dict]:
@@ -39,7 +47,13 @@ def save(businesses: list[dict]) -> None:
     if not businesses:
         return
     db = _get_client()
-    _with_timeout(db.table("negocios").upsert(businesses, ignore_duplicates=True))
+    payload = []
+    for business in businesses:
+        item = dict(business)
+        item["zone"] = _normalize_text(item.get("zone", ""))
+        item["business_type"] = _normalize_text(item.get("business_type", ""))
+        payload.append(item)
+    _with_timeout(db.table("negocios").upsert(payload, ignore_duplicates=True))
 
 
 def count_sent(zone: str, business_type: str) -> int:
@@ -48,7 +62,7 @@ def count_sent(zone: str, business_type: str) -> int:
     resp = _with_timeout(
         db.table("negocios")
         .select("id", count="exact")
-        .eq("zone", zone.lower())
-        .eq("business_type", business_type.lower())
+        .eq("zone", _normalize_text(zone))
+        .eq("business_type", _normalize_text(business_type))
     )
     return resp.count or 0

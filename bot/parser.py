@@ -12,7 +12,7 @@ PROMPT = """Eres un asistente que extrae información de solicitudes de leads y 
 El usuario envía un mensaje pidiendo un listado de negocios. Debes extraer:
 - quantity: número entero de negocios solicitados (entre 1 y 200)
 - business_type: tipo de negocio en inglés, plural, minúsculas (ej: "aesthetic clinics", "restaurants", "plumbers")
-- zone: ciudad/zona en inglés, con mayúscula inicial (ej: "Barcelona", "Dubai", "Paris")
+- zone: ciudad y, si es posible, país explícito (ej: "Barcelona, Spain", "Dubai, United Arab Emirates", "Paris, France")
 - phone_prefix: prefijo telefónico internacional del país (ej: "+971" para UAE, "+34" para España, "+33" para Francia)
 
 Además, genera una guía comercial adaptada específicamente a ese tipo de negocio y zona, con exactamente 6 puntos:
@@ -38,6 +38,9 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
      ["CRM", "<texto>"]
    ]
 }
+
+Si la ciudad es ambigua o global y el país no está claro, devuelve:
+{"error": "Necesito la ciudad y el país para filtrar con precisión geográfica."}
 
 Si no puedes extraer quantity, business_type o zone del mensaje, devuelve:
 {"error": "<explicación en español de qué falta>"}
@@ -88,10 +91,16 @@ def parse_request(user_message: str) -> dict:
     if not data.get("business_type") or not data.get("zone"):
         raise ValueError("Especifica el tipo de negocio y la zona (ej: 'Dame 15 clínicas en Barcelona')")
 
+    zone = data["zone"].strip()
+    if "," not in zone:
+        ambiguous_cities = {"valencia", "paris", "london", "madrid", "dubai", "buenos aires"}
+        if zone.lower() in ambiguous_cities:
+            raise ValueError("Necesito la ciudad y el país para filtrar con precisión geográfica. Ej: 'Valencia, Spain'")
+
     return {
         "quantity": quantity,
         "business_type": data["business_type"].lower().strip(),
-        "zone": data["zone"].strip(),
+        "zone": zone,
         "phone_prefix": data.get("phone_prefix", ""),
         "cold_call_guide": data.get("cold_call_guide", []),
     }

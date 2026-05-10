@@ -5,6 +5,7 @@ import time
 import logging
 import requests
 from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS, HTTP_TIMEOUT_SECS
+from geo_utils import extract_geo_fields, location_matches_target, parse_target_location
 
 BASE_URL = "https://api.apify.com/v2"
 HEADERS  = {"Authorization": f"Bearer {APIFY_API_TOKEN}"}
@@ -110,11 +111,17 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
     Devuelve lista normalizada con place_id, name, phone, address, zone,
     business_type, website, rating, reviews_count.
     """
+    target = parse_target_location(zone)
+    zone_query = target["raw"]
+    if target["city"] and target["country"]:
+        zone_query = f"{target['city']}, {target['country']}"
+
     per_search = max(20, (max_results + 10) // 2)
     run_input = {
         "searchStringsArray": [
-            f"{business_type} {zone}",
-            f"best {business_type} in {zone}",
+            f"{business_type} in {zone_query}",
+            f"{business_type} in {target['city']}, {target['country']}" if target["country"] else f"{business_type} in {target['city']}",
+            f"best {business_type} in {zone_query}",
         ],
         "maxCrawledPlacesPerSearch": per_search,
         "language": "en",
@@ -128,6 +135,7 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
     raw = _run_actor(run_input)
 
     seen_ids = set()
+    discarded_location = 0
     results = []
     for p in raw:
         place_id = (p.get("placeId") or "").strip()
@@ -136,17 +144,41 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
             continue
         seen_ids.add(place_id)
 
+        if not location_matches_target(p, target):
+            discarded_location += 1
+            logger.info(
+                "Discarding business outside target location | place_id=%s | name=%s | target=%s | geo=%s",
+                place_id,
+                name,
+                zone,
+                extract_geo_fields(p),
+            )
+            continue
+
         phone_raw = p.get("phone") or p.get("phoneUnformatted") or ""
+        geo = extract_geo_fields(p)
         results.append({
             "place_id":      place_id,
             "name":          name,
             "phone":         _normalize_phone(phone_raw, phone_prefix),
-            "address":       (p.get("address") or "").strip(),
-            "zone":          (p.get("neighborhood") or p.get("city") or zone).strip(),
+            "address":       geo["address"],
+            "formatted_address": geo["formatted_address"],
+            "city":          geo["city"],
+            "country":       geo["country"],
+            "latitude":      geo["lat"],
+            "longitude":     geo["lng"],
+            "zone":          zone,
             "business_type": business_type.lower(),
             "website":       (p.get("website") or "").strip(),
             "rating":        p.get("totalScore") or None,
             "reviews_count": p.get("reviewsCount") or 0,
         })
 
+    logger.info(
+        "Filtered by location | target=%s | raw=%s | kept=%s | discarded_location=%s",
+        zone,
+        len(raw),
+        len(results),
+        discarded_location,
+    )
     return results
