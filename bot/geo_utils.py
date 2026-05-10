@@ -1,5 +1,5 @@
 """
-Utilidades para normalización y filtrado geográfico estricto.
+Utilidades para normalización y filtrado geográfico inteligente.
 """
 import re
 import unicodedata
@@ -17,6 +17,40 @@ _COUNTRY_ALIASES = {
     "paris": "france",
     "argentina": "argentina",
     "buenos aires": "argentina",
+}
+
+_TARGET_ALIASES = {
+    "dubai": {
+        "dubai",
+        "dubai healthcare city",
+        "jumeirah",
+        "dch",
+        "business bay",
+        "downtown dubai",
+        "marina",
+        "dubai marina",
+        "jlt",
+        "jumeirah lake towers",
+        "uae",
+        "united arab emirates",
+    }
+}
+
+_STRONG_COUNTRY_REJECTIONS = {
+    "germany",
+    "india",
+    "pakistan",
+    "bangladesh",
+    "nepal",
+    "uk",
+    "united kingdom",
+    "ukraine",
+    "russia",
+    "france",
+    "spain",
+    "italy",
+    "portugal",
+    "turkey",
 }
 
 
@@ -42,6 +76,7 @@ def parse_target_location(zone: str) -> dict:
         "city_norm": _norm(city),
         "country_norm": _norm(country),
         "raw_norm": _norm(raw),
+        "aliases": _TARGET_ALIASES.get(_norm(city), { _norm(city) }) | ({_norm(country)} if country else set()),
     }
 
 
@@ -63,28 +98,46 @@ def extract_geo_fields(item: dict) -> dict:
     }
 
 
-def location_matches_target(item: dict, target: dict) -> bool:
+def _contains_any(haystack: str, needles: set[str]) -> str:
+    for needle in sorted(needles, key=len, reverse=True):
+        if needle and needle in haystack:
+            return needle
+    return ""
+
+
+def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     geo = extract_geo_fields(item)
     city = _norm(geo["city"])
     country = _norm(geo["country"])
     address = _norm(geo["address"])
     formatted = _norm(geo["formatted_address"])
+    combined = " | ".join(v for v in [city, country, address, formatted] if v)
     target_city = target["city_norm"]
     target_country = target["country_norm"]
+    aliases = set(target.get("aliases") or set())
+    aliases.add(target_city)
+    if target_country:
+        aliases.add(target_country)
 
-    city_ok = bool(target_city) and (
-        city == target_city or
-        target_city in city or
-        target_city in address or
-        target_city in formatted
-    )
-    if not city_ok:
-        return False
+    rejected_country = _contains_any(combined, _STRONG_COUNTRY_REJECTIONS - ({target_country} if target_country else set()))
+    if rejected_country:
+        return False, f"rejected_country:{rejected_country}"
 
     if target_country:
-        return (
-            country == target_country or
-            target_country in address or
-            target_country in formatted
-        )
-    return True
+        if country == target_country or target_country in country:
+            return True, "accepted_country_field"
+        if target_country in address or target_country in formatted:
+            return True, "accepted_country_address"
+
+    if city and any(alias == city or alias in city or city in alias for alias in aliases):
+        return True, "accepted_city_field"
+
+    matched_alias = _contains_any(address, aliases) or _contains_any(formatted, aliases)
+    if matched_alias:
+        return True, f"accepted_alias:{matched_alias}"
+
+    return False, "rejected_no_geo_match"
+
+
+def location_matches_target(item: dict, target: dict) -> bool:
+    return geo_match_reason(item, target)[0]

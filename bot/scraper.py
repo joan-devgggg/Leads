@@ -5,7 +5,7 @@ import time
 import logging
 import requests
 from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS, HTTP_TIMEOUT_SECS
-from geo_utils import extract_geo_fields, location_matches_target, parse_target_location
+from geo_utils import extract_geo_fields, geo_match_reason, parse_target_location
 
 BASE_URL = "https://api.apify.com/v2"
 HEADERS  = {"Authorization": f"Bearer {APIFY_API_TOKEN}"}
@@ -144,10 +144,12 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
             continue
         seen_ids.add(place_id)
 
-        if not location_matches_target(p, target):
+        accepted, reason = geo_match_reason(p, target)
+        if not accepted:
             discarded_location += 1
             logger.info(
-                "Discarding business outside target location | place_id=%s | name=%s | target=%s | geo=%s",
+                "rejected_geo | reason=%s | place_id=%s | name=%s | target=%s | geo=%s",
+                reason,
                 place_id,
                 name,
                 zone,
@@ -173,6 +175,14 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
             "rating":        p.get("totalScore") or None,
             "reviews_count": p.get("reviewsCount") or 0,
         })
+        logger.info(
+            "accepted_geo | reason=%s | place_id=%s | name=%s | target=%s | geo=%s",
+            reason,
+            place_id,
+            name,
+            zone,
+            geo,
+        )
 
     logger.info(
         "Filtered by location | target=%s | raw=%s | kept=%s | discarded_location=%s",

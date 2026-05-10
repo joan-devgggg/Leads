@@ -93,7 +93,7 @@ def parse_request(user_message: str) -> dict:
 
     zone = data["zone"].strip()
     if "," not in zone:
-        ambiguous_cities = {"valencia", "paris", "london", "madrid", "dubai", "buenos aires"}
+        ambiguous_cities = {"valencia", "paris", "london", "madrid", "buenos aires"}
         if zone.lower() in ambiguous_cities:
             raise ValueError("Necesito la ciudad y el país para filtrar con precisión geográfica. Ej: 'Valencia, Spain'")
 
