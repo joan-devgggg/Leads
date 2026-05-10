@@ -10,6 +10,8 @@ import threading
 import time
 from pathlib import Path
 
+from json_utils import make_json_safe
+
 logger = logging.getLogger(__name__)
 
 _DB_PATH = Path(__file__).with_name("state_store.sqlite3")
@@ -69,7 +71,7 @@ def cache_get(key: str):
 
 def cache_set(key: str, value) -> None:
     init()
-    payload = json.dumps(value, ensure_ascii=True)
+    payload = json.dumps(make_json_safe(value), ensure_ascii=True)
     with _LOCK, _conn() as conn:
         conn.execute(
             "INSERT INTO cache(cache_key, cache_value, updated_at) VALUES (?, ?, ?) "
@@ -102,7 +104,7 @@ def update_zone_stats(zone_key: str, *, leads_found: int = 0, duplicate_ratio: f
     current["leads_found"] = int(current.get("leads_found", 0)) + int(leads_found)
     current["duplicate_ratio"] = duplicate_ratio if duplicate_ratio else float(current.get("duplicate_ratio", 0))
     current["density"] = density if density else float(current.get("density", 0))
-    current["keyword_effectiveness"] = json.dumps(keywords or [])
+    current["keyword_effectiveness"] = json.dumps(make_json_safe(keywords or []), ensure_ascii=True)
     current["response_time"] = response_time if response_time else float(current.get("response_time", 0))
     with _LOCK, _conn() as conn:
         conn.execute(

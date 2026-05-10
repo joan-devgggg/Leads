@@ -10,6 +10,7 @@ from itertools import product
 
 import requests
 from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS, HTTP_TIMEOUT_SECS
+from json_utils import make_json_safe
 from geo_utils import build_geo_plan, extract_geo_fields, geo_match_reason, plan_to_points, resolve_geo_target
 from planner import build_adaptive_plan
 from search_budget import SearchBudget
@@ -71,7 +72,7 @@ def _run_actor(run_input: dict) -> list[dict]:
     r = requests.post(
         run_url,
         headers=HEADERS,
-        json=run_input,
+        json=make_json_safe(run_input),
         params={"timeout": APIFY_TIMEOUT_SECS},
         timeout=HTTP_TIMEOUT_SECS,
     )
@@ -264,7 +265,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             pages_visited += 1
             logger.info("[SEARCH] keyword=%s coord=%s radius=%s page=%s results_received=%s", step.get("keyword"), coord.name if coord else "", radius, page, 0)
             logger.info("[ZONE] searching=%s", coord.name if coord else zone_query)
-            payload = {
+            payload = make_json_safe({
                 "searchStringsArray": [search_string],
                 "maxCrawledPlacesPerSearch": 100,
                 "language": "en",
@@ -273,7 +274,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 "exportPlaceUrls": False,
                 "additionalInfo": False,
                 "includeWebResults": False,
-            }
+            })
             if next_page_token:
                 payload["nextPageToken"] = next_page_token
             try:

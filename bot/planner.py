@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 
 from geo_utils import SearchPoint, _norm, build_geo_plan, resolve_geo_target
+from json_utils import make_json_safe
 from search_budget import SearchBudget
 from state_store import cache_get, cache_set, get_zone_stats
 
@@ -67,7 +68,7 @@ def build_country_plan(zone: str, requested_count: int, budget: SearchBudget | N
         "target": target,
         "nodes": [{"name": n.name, "zone": n.zone, "score": n.score, "target": n.target, "points": [p.__dict__ for p in n.points]} for n in nodes],
     }
-    cache_set(f"country_plan::{_norm(zone)}::{requested_count}", payload)
+    cache_set(f"country_plan::{_norm(zone)}::{requested_count}", make_json_safe(payload))
     logger.info("[PLANNER] country=%s cities_selected=%s", country, len(nodes))
     for node in nodes[:5]:
         logger.info("[SCORE] %s=%.2f", node.name, node.score)

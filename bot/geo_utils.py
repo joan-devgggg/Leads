@@ -13,6 +13,7 @@ from pathlib import Path
 
 import requests
 
+from json_utils import make_json_safe
 from state_store import cache_get, cache_set, acquire
 
 logger = logging.getLogger(__name__)
@@ -185,7 +186,7 @@ def _load_cache() -> dict:
 
 def _save_cache(cache: dict) -> None:
     try:
-        _CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=True, indent=2, sort_keys=True))
+        _CACHE_PATH.write_text(json.dumps(make_json_safe(cache), ensure_ascii=True, indent=2, sort_keys=True))
     except Exception:
         logger.exception("No se pudo guardar cache geográfica")
 
@@ -199,9 +200,9 @@ def _cache_get(key: str):
 
 
 def _cache_set(key: str, value: dict) -> None:
-    cache_set(key, value)
+    cache_set(key, make_json_safe(value))
     cache = _load_cache()
-    cache[key] = value
+    cache[key] = make_json_safe(value)
     _save_cache(cache)
 
 
@@ -228,7 +229,7 @@ def parse_target_location(zone: str) -> dict:
         "city_norm": _norm(city),
         "country_norm": _norm(country),
         "raw_norm": _norm(raw),
-        "aliases": _TARGET_ALIASES.get(_norm(city), { _norm(city) }) | ({_norm(country)} if country else set()),
+        "aliases": sorted(_TARGET_ALIASES.get(_norm(city), {_norm(city)}) | ({_norm(country)} if country else set())),
         "city_type": city_type,
         "threshold": _CITY_THRESHOLDS.get(_norm(city), _REGIONAL_THRESHOLDS[city_type]),
     }
@@ -408,7 +409,7 @@ def build_geo_plan(zone: str, requested_count: int) -> dict:
         points.extend(_bbox_to_grid(bounds, 5, max_points=25))
         points = _dedupe_points(points)
 
-    cache_value = {"target": target, "points": [point.__dict__ for point in points]}
+    cache_value = {"target": make_json_safe(target), "points": [make_json_safe(point.__dict__) for point in points]}
     _cache_set(f"plan::{_norm(zone)}::{requested_count}", cache_value)
     return cache_value
 
