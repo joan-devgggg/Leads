@@ -62,6 +62,29 @@ _TARGET_ALIASES = {
         "villa crespo",
         "puerto madero",
     },
+    "london": {
+        "london",
+        "city of london",
+        "westminster",
+        "kensington",
+        "chelsea",
+        "canary wharf",
+        "soho",
+        "shoreditch",
+        "camden",
+    },
+    "new york": {
+        "new york",
+        "nyc",
+        "manhattan",
+        "brooklyn",
+        "queens",
+        "bronx",
+        "staten island",
+        "midtown",
+        "upper east side",
+        "upper west side",
+    },
 }
 
 _STRONG_COUNTRY_REJECTIONS = {
@@ -91,6 +114,23 @@ _LOCATION_PRIORITY = (
     ("address", 6),
 )
 
+_CITY_THRESHOLDS = {
+    "dubai": 18,
+    "london": 18,
+    "new york": 18,
+    "valencia": 26,
+    "buenos aires": 22,
+}
+
+_REGIONAL_THRESHOLDS = {
+    "large": 18,
+    "medium": 22,
+    "small": 26,
+}
+
+_LARGE_CITIES = {"dubai", "london", "new york", "new york city", "nyc", "buenos aires"}
+_SMALL_CITIES = {"valencia"}
+
 
 def _norm(text: str) -> str:
     text = unicodedata.normalize("NFKD", text or "")
@@ -115,6 +155,7 @@ def parse_target_location(zone: str) -> dict:
         "country_norm": _norm(country),
         "raw_norm": _norm(raw),
         "aliases": _TARGET_ALIASES.get(_norm(city), { _norm(city) }) | ({_norm(country)} if country else set()),
+        "threshold": _CITY_THRESHOLDS.get(_norm(city), _REGIONAL_THRESHOLDS["large"] if _norm(city) in _LARGE_CITIES else _REGIONAL_THRESHOLDS["small"] if _norm(city) in _SMALL_CITIES else _REGIONAL_THRESHOLDS["medium"]),
     }
 
 
@@ -158,6 +199,7 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     coords = geo["lat"] is not None and geo["lng"] is not None
     target_city = target["city_norm"]
     target_country = target["country_norm"]
+    threshold = int(target.get("threshold") or _REGIONAL_THRESHOLDS["medium"])
     aliases = set(target.get("aliases") or set())
     aliases.add(target_city)
     if target_country:
@@ -221,10 +263,10 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     if not matched_terms:
         return False, "rejection_reason:no_geo_signal|geo_score:0|matched_terms:[]"
 
-    if score >= 20:
-        return True, f"geo_score:{score}|matched_terms:{matched_terms}"
+    if score >= threshold:
+        return True, f"accepted|threshold:{threshold}|geo_score:{score}|matched_terms:{matched_terms}"
 
-    return False, f"rejection_reason:low_score|geo_score:{score}|matched_terms:{matched_terms}"
+    return False, f"rejected|threshold:{threshold}|rejection_reason:low_score|geo_score:{score}|matched_terms:{matched_terms}"
 
 
 def location_matches_target(item: dict, target: dict) -> bool:
