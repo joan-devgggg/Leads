@@ -2,36 +2,89 @@
 Wrapper de Apify Google Maps Scraper, generalizado desde scrape_clinicas_dubai.py.
 """
 import time
+import logging
 import requests
 from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS
 
 BASE_URL = "https://api.apify.com/v2"
 HEADERS  = {"Authorization": f"Bearer {APIFY_API_TOKEN}"}
 
+logger = logging.getLogger(__name__)
+
+
+def _log_response(label: str, response: requests.Response) -> None:
+    logger.info(
+        "%s | url=%s | status=%s | content_type=%s | body=%r",
+        label,
+        response.url,
+        response.status_code,
+        response.headers.get("content-type"),
+        response.text[:1000],
+    )
+
+
+def _safe_json(response: requests.Response, label: str):
+    _log_response(label, response)
+
+    body = response.text.strip()
+    if not body:
+        raise RuntimeError(f"Apify devolvió una respuesta vacía en {label} ({response.url})")
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Apify devolvió JSON inválido en {label} ({response.url}): {body[:500]}"
+        ) from exc
+
 
 def _run_actor(run_input: dict) -> list[dict]:
+    run_url = f"{BASE_URL}/acts/{APIFY_ACTOR_ID}/runs"
+    logger.info("Apify POST %s", run_url)
     r = requests.post(
-        f"{BASE_URL}/acts/{APIFY_ACTOR_ID}/runs",
+        run_url,
         headers=HEADERS,
         json=run_input,
         params={"timeout": APIFY_TIMEOUT_SECS},
     )
+    _log_response("Apify create run", r)
     r.raise_for_status()
-    run_id = r.json()["data"]["id"]
+
+    payload = _safe_json(r, "Apify create run")
+    run_id = payload.get("data", {}).get("id")
+    if not run_id:
+        raise RuntimeError(f"Apify no devolvió run_id en {run_url}: {payload}")
 
     deadline = time.time() + APIFY_TIMEOUT_SECS
     while time.time() < deadline:
-        s = requests.get(f"{BASE_URL}/actor-runs/{run_id}", headers=HEADERS).json()["data"]
-        status = s["status"]
+        status_url = f"{BASE_URL}/actor-runs/{run_id}"
+        logger.info("Apify GET %s", status_url)
+        s_resp = requests.get(status_url, headers=HEADERS)
+        _log_response("Apify run status", s_resp)
+        s_resp.raise_for_status()
+        s_payload = _safe_json(s_resp, "Apify run status")
+        s = s_payload.get("data") or {}
+        status = s.get("status")
+        if not status:
+            raise RuntimeError(f"Apify no devolvió status en {status_url}: {s_payload}")
+        logger.info("Apify run status=%s run_id=%s", status, run_id)
         if status == "SUCCEEDED":
-            dataset_id = s["defaultDatasetId"]
-            items = requests.get(
-                f"{BASE_URL}/datasets/{dataset_id}/items",
+            dataset_id = s.get("defaultDatasetId")
+            if not dataset_id:
+                raise RuntimeError(f"Apify no devolvió defaultDatasetId en {status_url}: {s_payload}")
+            dataset_url = f"{BASE_URL}/datasets/{dataset_id}/items"
+            logger.info("Apify GET %s", dataset_url)
+            items_resp = requests.get(
+                dataset_url,
                 headers=HEADERS,
                 params={"limit": 500, "clean": "true", "format": "json"},
-            ).json()
+            )
+            _log_response("Apify dataset items", items_resp)
+            items_resp.raise_for_status()
+            items = _safe_json(items_resp, "Apify dataset items")
             if not isinstance(items, list):
                 raise RuntimeError(f"Respuesta inesperada de Apify dataset: {str(items)[:200]}")
+            logger.info("Apify dataset items count=%s dataset_id=%s", len(items), dataset_id)
             return items
         if status in ("FAILED", "ABORTED", "TIMED-OUT"):
             raise RuntimeError(f"Apify terminó con estado: {status}")

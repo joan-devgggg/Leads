@@ -166,15 +166,15 @@ def generate_pdf(clinics: list[dict], path: Path) -> None:
     story.append(Paragraph(f"Generado el {datetime.now().strftime('%d/%m/%Y')} · {len(clinics)} clínicas", sub_style))
     story.append(HRFlowable(width="100%", thickness=2, color=gold, spaceAfter=14))
 
-    # ── Guía rápida de cold call ─────────────────────────────────────────────
-    story.append(Paragraph("Guía rápida de llamada en frío", h2_style))
+    # ── Guía rápida comercial ───────────────────────────────────────────────
+    story.append(Paragraph("Guía comercial rápida", h2_style))
     tips = [
         ("Hora ideal",       "Dom–Jue de 10:00–12:00 o 15:00–17:00 (hora UAE, UTC+4). Viernes y sábado son fin de semana en Dubai."),
-        ("Apertura",         '"Good morning, may I speak with the clinic manager or owner?" — siempre pide al decision-maker directamente.'),
-        ("Pitch 15 seg",     '"We help aesthetic clinics in Dubai attract high-value clients through targeted social media advertising. We\'re currently onboarding 2 clinics in [zona]. Is this a good time for 2 minutes?"'),
-        ("Objeción común",   '"We already have marketing" → "That\'s great! Are you happy with the ROI? We typically double the bookings in 60 days — I can show you a case study."'),
-        ("Cierre",           'Objetivo: agendar una videollamada de 20 min. "Can we jump on a quick Zoom this week? Thursday at 11 AM Dubai time?"'),
-        ("CRM",              'Apunta: contestó / no contestó / interesado / no interesado / callback. Llama 3 veces antes de descartar.'),
+        ("Apertura",         '"Hola, soy [nombre]. Trabajo con clínicas estéticas que quieren responder más rápido y automatizar su seguimiento."'),
+        ("Pitch 15 seg",     '"Ayudamos a clínicas estéticas a automatizar WhatsApp, llamadas, reservas y seguimiento con agentes IA que responden 24/7, recuperan leads perdidos y ayudan a cerrar más pacientes sin contratar más personal."'),
+        ("Objeción común",   '"Ya tenemos equipo / recepcionista / CRM" → "Perfecto, no venimos a reemplazarlo; venimos a automatizar la parte repetitiva, reducir pérdidas de leads y hacer que cada contacto avance."'),
+        ("Cierre",           'Objetivo: agendar una demo breve. "¿Te encaja una llamada de 15 minutos esta semana para enseñarte cómo lo aplicaríamos en tu clínica?"'),
+        ("CRM",              'Apunta: contacto, dolor principal, sistema actual, interés, siguiente paso y fecha de seguimiento.'),
     ]
     tip_data = [[Paragraph(f"<b>{k}</b>", tip_style), Paragraph(v, tip_style)] for k, v in tips]
     tip_table = Table(tip_data, colWidths=[2.8*cm, 13.7*cm])

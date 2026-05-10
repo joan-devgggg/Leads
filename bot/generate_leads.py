@@ -28,13 +28,13 @@ def generate_leads_for_zone(business_type: str, zone: str, quantity: int, phone_
         "business_type": business_type,
         "zone": zone,
         "phone_prefix": phone_prefix,
-        "cold_call_guide": [
-            ["Hora ideal", "Dom–Jue de 10:00–12:00 o 15:00–17:00 (hora local). Evita fines de semana según el país."],
-            ["Apertura", '"Good morning, may I speak with the clinic manager or owner?" — siempre pide al decision-maker directamente.'],
-            ["Pitch 15 seg", '"We help aesthetic clinics attract high-value clients through targeted social media advertising. We\'re currently onboarding 2 clinics in [zona]. Is this a good time for 2 minutes?"'],
-            ["Objeción común", '"We already have marketing" → "That\'s great! Are you happy with the ROI? We typically double the bookings in 60 days — I can show you a case study."'],
-            ["Cierre", 'Objetivo: agendar una videollamada de 20 min. "Can we jump on a quick Zoom this week? Thursday at 11 AM local time?"'],
-            ["CRM", 'Apunta: contestó / no contestó / interesado / no interesado / callback. Llama 3 veces antes de descartar.'],
+            "cold_call_guide": [
+             ["Hora ideal", "Dom–Jue de 10:00–12:00 o 15:00–17:00 (hora local). Prioriza franjas con menos saturación de recepción."],
+             ["Apertura", '"Hola, soy [nombre]. Te llamo porque trabajamos con clínicas estéticas que quieren responder más rápido y no perder leads."'],
+             ["Pitch 15 seg", '"Ayudamos a clínicas estéticas a automatizar WhatsApp, seguimiento y atención al cliente con agentes IA que responden 24/7, recuperan leads perdidos y ayudan a cerrar más citas sin sumar personal."'],
+             ["Objeción común", '"Ya tenemos recepción / ya tenemos CRM" → "Perfecto, justo ahí aportamos valor: automatizamos el seguimiento, reducimos tiempos de respuesta y evitamos que entren leads fríos o se pierdan reservas."'],
+             ["Cierre", 'Objetivo: agendar una demo breve. "¿Te va bien una llamada de 15 minutos esta semana para enseñarte cómo lo automatizaríamos en tu clínica?"'],
+             ["CRM", 'Registra: contacto, interés, sistema actual, dolor principal, siguiente paso y fecha de seguimiento.'],
         ]
     }
     print(f"   ✓ Quantity: {req['quantity']}")

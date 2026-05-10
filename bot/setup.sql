@@ -1,6 +1,6 @@
 -- Ejecutar una sola vez en Supabase → SQL Editor
 
-CREATE TABLE IF NOT EXISTS businesses (
+CREATE TABLE IF NOT EXISTS negocios (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     place_id        TEXT NOT NULL,
     name            TEXT NOT NULL,
@@ -14,5 +14,5 @@ CREATE TABLE IF NOT EXISTS businesses (
     sent_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_place_id  ON businesses(place_id);
-CREATE INDEX        IF NOT EXISTS idx_zone_type ON businesses(zone, business_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_place_id  ON negocios(place_id);
+CREATE INDEX        IF NOT EXISTS idx_zone_type ON negocios(zone, business_type);

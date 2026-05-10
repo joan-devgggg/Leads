@@ -1,13 +1,13 @@
 """
 Parsea el mensaje del usuario con el LLM y devuelve la solicitud estructurada
-junto con la guía de cold call adaptada al tipo de negocio y zona.
+junto con una guía comercial enfocada en automatización e IA para clínicas estéticas.
 """
 import json
 import re
 import requests
 from config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 
-PROMPT = """Eres un asistente que extrae información de solicitudes de leads y genera guías de llamada en frío.
+PROMPT = """Eres un asistente que extrae información de solicitudes de leads y genera una guía comercial premium.
 
 El usuario envía un mensaje pidiendo un listado de negocios. Debes extraer:
 - quantity: número entero de negocios solicitados (entre 1 y 200)
@@ -15,13 +15,13 @@ El usuario envía un mensaje pidiendo un listado de negocios. Debes extraer:
 - zone: ciudad/zona en inglés, con mayúscula inicial (ej: "Barcelona", "Dubai", "Paris")
 - phone_prefix: prefijo telefónico internacional del país (ej: "+971" para UAE, "+34" para España, "+33" para Francia)
 
-Además, genera una guía de llamada en frío adaptada específicamente a ese tipo de negocio y zona, con exactamente 6 puntos:
+Además, genera una guía comercial adaptada específicamente a ese tipo de negocio y zona, con exactamente 6 puntos:
 1. Hora ideal (con horario local y días laborables del país)
-2. Apertura (cómo iniciar la llamada)
-3. Pitch 15 seg (propuesta de valor adaptada al tipo de negocio)
-4. Objeción común y cómo manejarla (la más frecuente para ese sector)
-5. Cierre (cómo agendar una videollamada)
-6. CRM (cómo registrar el resultado)
+2. Apertura (cómo iniciar la llamada de forma directa y moderna)
+3. Pitch 15 seg (enfoque en automatización, IA, ahorro de tiempo y más citas)
+4. Objeción común y cómo manejarla (la más frecuente para ese sector, sin enfoque de captación tradicional)
+5. Cierre (cómo avanzar hacia una demo o reunión breve)
+6. CRM (cómo registrar el resultado y el siguiente paso)
 
 Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
 {
@@ -29,14 +29,14 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
   "business_type": "<string>",
   "zone": "<string>",
   "phone_prefix": "<string>",
-  "cold_call_guide": [
-    ["Hora ideal", "<texto>"],
-    ["Apertura", "<texto>"],
-    ["Pitch 15 seg", "<texto>"],
-    ["Objeción común", "<texto>"],
-    ["Cierre", "<texto>"],
-    ["CRM", "<texto>"]
-  ]
+    "cold_call_guide": [
+     ["Hora ideal", "<texto>"],
+     ["Apertura", "<texto>"],
+     ["Pitch 15 seg", "<texto>"],
+     ["Objeción común", "<texto>"],
+     ["Cierre", "<texto>"],
+     ["CRM", "<texto>"]
+   ]
 }
 
 Si no puedes extraer quantity, business_type o zone del mensaje, devuelve:

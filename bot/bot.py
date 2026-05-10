@@ -23,7 +23,7 @@ _HELP = (
     "• Dame 50 clínicas estéticas de Dubai\n"
     "• Envíame 20 restaurantes en Barcelona\n"
     "• Quiero 30 peluquerías en París\n\n"
-    "Recibirás un PDF con guía de llamada en frío + listado + hoja de seguimiento."
+    "Recibirás un PDF con guía comercial de automatización e IA + listado + hoja de seguimiento."
 )
 
 

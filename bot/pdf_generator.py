@@ -1,6 +1,6 @@
 """
-Generador de PDF, generalizado desde scrape_clinicas_dubai.py.
-Misma estructura: portada+guía → listado → hoja de seguimiento.
+Generador de PDF para clínicas estéticas con enfoque en automatización e IA.
+Misma estructura: portada + guía comercial + listado + hoja de seguimiento.
 """
 from datetime import datetime
 from pathlib import Path
@@ -17,9 +17,10 @@ from reportlab.platypus import (
 # Paleta idéntica al original
 GOLD  = colors.HexColor("#C8A96E")
 DARK  = colors.HexColor("#1A1A2E")
-MID   = colors.HexColor("#2D2D4E")
+MID   = colors.HexColor("#243B6B")
 LIGHT = colors.HexColor("#F5F0E8")
-ROW_A = colors.HexColor("#EAE6F0")
+ROW_A = colors.HexColor("#F7F9FC")
+GRID  = colors.HexColor("#D7DDE8")
 
 _styles = getSampleStyleSheet()
 
@@ -28,6 +29,15 @@ _sub    = ParagraphStyle("sub",    parent=_styles["Normal"],  fontSize=10, textC
 _h2     = ParagraphStyle("h2",     parent=_styles["Heading2"],fontSize=13, textColor=DARK,  spaceBefore=10, spaceAfter=4)
 _body   = ParagraphStyle("body",   parent=_styles["Normal"],  fontSize=8.5,leading=12, textColor=colors.HexColor("#333333"))
 _tip    = ParagraphStyle("tip",    parent=_styles["Normal"],  fontSize=8,  leading=11, textColor=colors.HexColor("#444444"), leftIndent=10)
+_th     = ParagraphStyle(
+    "table_header",
+    parent=_styles["Normal"],
+    fontSize=8.5,
+    leading=10,
+    textColor=colors.white,
+    alignment=1,
+    fontName="Helvetica-Bold",
+)
 
 
 def generate_pdf(
@@ -50,7 +60,7 @@ def generate_pdf(
 
     # ── Portada ──────────────────────────────────────────────────────────────
     story.append(Spacer(1, 1*cm))
-    story.append(Paragraph("Directorio de Llamadas en Frío", _title))
+    story.append(Paragraph("Directorio Comercial de Automatización e IA", _title))
     story.append(Paragraph(f"{business_type.title()} · {zone}", _sub))
     story.append(Paragraph(
         f"Generado el {datetime.now().strftime('%d/%m/%Y')} · {len(businesses)} negocios",
@@ -58,8 +68,8 @@ def generate_pdf(
     ))
     story.append(HRFlowable(width="100%", thickness=2, color=GOLD, spaceAfter=14))
 
-    # ── Guía de cold call (generada por LLM, adaptada al tipo/zona) ──────────
-    story.append(Paragraph("Guía rápida de llamada en frío", _h2))
+    # ── Guía comercial (generada por LLM, adaptada al tipo/zona) ─────────────
+    story.append(Paragraph("Guía comercial rápida", _h2))
 
     tip_data = [
         [Paragraph(f"<b>{k}</b>", _tip), Paragraph(v, _tip)]
@@ -83,11 +93,11 @@ def generate_pdf(
 
     COLS = [0.5*cm, 5.5*cm, 3.5*cm, 2.3*cm, 4.7*cm]
     header = [
-        Paragraph("<b>#</b>",             _body),
-        Paragraph("<b>Negocio</b>",        _body),
-        Paragraph("<b>Teléfono</b>",       _body),
-        Paragraph("<b>Rating</b>",         _body),
-        Paragraph("<b>Web / Dirección</b>",_body),
+        Paragraph("#", _th),
+        Paragraph("Negocio", _th),
+        Paragraph("Teléfono", _th),
+        Paragraph("Rating", _th),
+        Paragraph("Web / Dirección", _th),
     ]
     rows = [header]
 
@@ -113,27 +123,31 @@ def generate_pdf(
         ("BACKGROUND",    (0, 0), (-1, 0),  MID),
         ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
         ("ROWBACKGROUNDS",(0, 1), (-1, -1), [ROW_A, colors.white]),
-        ("GRID",          (0, 0), (-1, -1), 0.3, colors.HexColor("#CCCCCC")),
+        ("GRID",          (0, 0), (-1, -1), 0.35, GRID),
+        ("LINEBELOW",     (0, 0), (-1, 0), 1.2, GOLD),
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("ALIGN",         (0, 0), (0, -1),  "CENTER"),
+        ("ALIGN",         (2, 1), (3, -1),  "CENTER"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
     ]))
     story.append(tbl)
 
     # ── Hoja de seguimiento ──────────────────────────────────────────────────
     story.append(PageBreak())
     story.append(Paragraph("Hoja de Seguimiento", _h2))
-    story.append(Paragraph("Imprime esta página para llevar el control de cada llamada.", _sub))
+    story.append(Paragraph("Imprime esta página para llevar el control de cada contacto y siguiente paso.", _sub))
     story.append(Spacer(1, 0.3*cm))
 
     track_header = [
-        Paragraph("<b>#</b>",    _body),
-        Paragraph("<b>Negocio</b>", _body),
-        Paragraph("<b>Teléfono</b>", _body),
-        Paragraph("<b>Estado</b><br/><font size='6'>✓ / ✗ / CB / INT</font>", _body),
-        Paragraph("<b>Notas / Próximo paso</b>", _body),
-        Paragraph("<b>Fecha callback</b>", _body),
+        Paragraph("#", _th),
+        Paragraph("Negocio", _th),
+        Paragraph("Teléfono", _th),
+        Paragraph("Estado", _th),
+        Paragraph("Notas / Próximo paso", _th),
+        Paragraph("Fecha callback", _th),
     ]
     track_rows = [track_header]
     for i, b in enumerate(businesses, 1):
@@ -155,11 +169,14 @@ def generate_pdf(
         ("BACKGROUND",    (0, 0), (-1, 0),  MID),
         ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
         ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#F9F9F9")]),
-        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#BBBBBB")),
+        ("GRID",          (0, 0), (-1, -1), 0.35, GRID),
+        ("LINEBELOW",     (0, 0), (-1, 0), 1.2, GOLD),
         ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",         (0, 0), (0, -1),  "CENTER"),
         ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
         ("ROWHEIGHT",     (0, 1), (-1, -1), 18),
     ]))
     story.append(track_tbl)
