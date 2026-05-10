@@ -148,7 +148,7 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
         if not accepted:
             discarded_location += 1
             logger.info(
-                "rejected_geo | rejection_reason=%s | place_id=%s | name=%s | target=%s | geo=%s",
+                "rejected_geo | result=%s | place_id=%s | name=%s | target=%s | geo=%s",
                 reason,
                 place_id,
                 name,
@@ -176,7 +176,7 @@ def scrape_businesses(business_type: str, zone: str, max_results: int, phone_pre
             "reviews_count": p.get("reviewsCount") or 0,
         })
         logger.info(
-            "accepted_geo | geo_result=%s | place_id=%s | name=%s | target=%s | geo=%s",
+            "accepted_geo | result=%s | place_id=%s | name=%s | target=%s | geo=%s",
             reason,
             place_id,
             name,

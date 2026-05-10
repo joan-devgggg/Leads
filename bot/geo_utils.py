@@ -123,13 +123,18 @@ _CITY_THRESHOLDS = {
 }
 
 _REGIONAL_THRESHOLDS = {
-    "large": 18,
-    "medium": 22,
-    "small": 26,
+    "mega_city": 18,
+    "large_city": 20,
+    "medium_city": 24,
+    "small_city": 28,
 }
 
-_LARGE_CITIES = {"dubai", "london", "new york", "new york city", "nyc", "buenos aires"}
-_SMALL_CITIES = {"valencia"}
+_CITY_CLASS_ALIASES = {
+    "mega_city": {"dubai", "london", "new york", "new york city", "nyc"},
+    "large_city": {"valencia", "milan", "lisbon", "buenos aires"},
+    "medium_city": set(),
+    "small_city": set(),
+}
 
 
 def _norm(text: str) -> str:
@@ -147,6 +152,7 @@ def parse_target_location(zone: str) -> dict:
         country = _COUNTRY_ALIASES.get(_norm(raw), "")
     if not country and city:
         country = _COUNTRY_ALIASES.get(_norm(city), "")
+    city_type = classify_city_type(city)
     return {
         "raw": raw,
         "city": city,
@@ -155,12 +161,25 @@ def parse_target_location(zone: str) -> dict:
         "country_norm": _norm(country),
         "raw_norm": _norm(raw),
         "aliases": _TARGET_ALIASES.get(_norm(city), { _norm(city) }) | ({_norm(country)} if country else set()),
-        "threshold": _CITY_THRESHOLDS.get(_norm(city), _REGIONAL_THRESHOLDS["large"] if _norm(city) in _LARGE_CITIES else _REGIONAL_THRESHOLDS["small"] if _norm(city) in _SMALL_CITIES else _REGIONAL_THRESHOLDS["medium"]),
+        "city_type": city_type,
+        "threshold": _CITY_THRESHOLDS.get(_norm(city), _REGIONAL_THRESHOLDS[city_type]),
     }
 
 
+def classify_city_type(city: str) -> str:
+    city_norm = _norm(city)
+    for city_type, aliases in _CITY_CLASS_ALIASES.items():
+        if city_norm in aliases:
+            return city_type
+    if any(token in city_norm for token in ("district", "county", "province", "prefecture")):
+        return "small_city"
+    if any(token in city_norm for token in ("metropolitan", "metro", "city")):
+        return "medium_city"
+    return "medium_city"
+
+
 def extract_geo_fields(item: dict) -> dict:
-    coords = item.get("coordinates") or item.get("location") or {}
+    coords = item.get("coordinates") or item.get("location") or item.get("geometry") or {}
     if isinstance(coords, dict):
         lat = coords.get("lat") or coords.get("latitude")
         lng = coords.get("lng") or coords.get("lon") or coords.get("longitude")
@@ -177,6 +196,7 @@ def extract_geo_fields(item: dict) -> dict:
         "country": (item.get("country") or item.get("countryName") or item.get("country_code") or item.get("countryCode") or "").strip(),
         "lat": lat,
         "lng": lng,
+        "has_geometry": bool(item.get("geometry") or item.get("location")),
     }
 
 
@@ -197,8 +217,10 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     address = _norm(geo["address"])
     formatted = _norm(geo["formatted_address"])
     coords = geo["lat"] is not None and geo["lng"] is not None
+    has_geometry = bool(geo.get("has_geometry"))
     target_city = target["city_norm"]
     target_country = target["country_norm"]
+    city_type = target.get("city_type") or classify_city_type(target.get("city", ""))
     threshold = int(target.get("threshold") or _REGIONAL_THRESHOLDS["medium"])
     aliases = set(target.get("aliases") or set())
     aliases.add(target_city)
@@ -207,6 +229,7 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
 
     matched_terms = []
     score = 0
+    confidence = 0.0
 
     rejected_country = _contains_any(" | ".join(v for v in [country, address, formatted, admin] if v), _STRONG_COUNTRY_REJECTIONS - ({target_country} if target_country else set()))
     if rejected_country:
@@ -215,6 +238,11 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     if coords:
         score += 40
         matched_terms.append("coordinates")
+        confidence += 0.35
+    if has_geometry:
+        score += 12
+        matched_terms.append("geometry")
+        confidence += 0.1
 
     for field_name, field_score in _LOCATION_PRIORITY:
         if field_name == "coordinates" or not field_score:
@@ -223,50 +251,72 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
             if target_city and target_city in formatted:
                 score += field_score
                 matched_terms.append("formatted_address")
+                confidence += 0.08
         elif field_name == "locality" and locality:
             if locality in aliases or any(alias in locality or locality in alias for alias in aliases):
                 score += field_score
                 matched_terms.append("locality")
+                confidence += 0.14
         elif field_name == "administrative_area" and admin:
             if admin in aliases or any(alias in admin or admin in alias for alias in aliases):
                 score += field_score
                 matched_terms.append("administrative_area")
+                confidence += 0.12
         elif field_name == "city" and city:
             if city in aliases or any(alias in city or city in alias for alias in aliases):
                 score += field_score
                 matched_terms.append("city_field")
+                confidence += 0.1
         elif field_name == "neighborhood" and neighborhood:
             if neighborhood in aliases or any(alias in neighborhood or neighborhood in alias for alias in aliases):
                 score += field_score
                 matched_terms.append("neighborhood")
+                confidence += 0.08
         elif field_name == "address" and address:
             if _contains_any(address, aliases):
                 score += field_score
                 matched_terms.append("address")
+                confidence += 0.05
 
     if target_country:
         if country == target_country or target_country in country:
             score += 24
             matched_terms.append("country_field")
+            confidence += 0.15
         elif target_country in address or target_country in formatted or target_country in admin:
             score += 16
             matched_terms.append("country_context")
+            confidence += 0.1
 
     if target_country and target_country in formatted:
         score += 8
         matched_terms.append("formatted_country")
+        confidence += 0.06
 
     if target_country and target_country in address:
         score += 5
         matched_terms.append("address_country")
+        confidence += 0.04
+
+    if city_type == "mega_city" and coords:
+        threshold = max(16, threshold - 2)
+    elif city_type == "large_city" and (coords or has_geometry):
+        threshold = max(18, threshold - 1)
+
+    if coords and not formatted:
+        threshold -= 2
+    if coords and not target_country:
+        threshold -= 1
+
+    confidence = min(confidence, 0.99)
 
     if not matched_terms:
-        return False, "rejection_reason:no_geo_signal|geo_score:0|matched_terms:[]"
+        return False, f"rejection_reason:no_geo_signal|city_type:{city_type}|threshold:{threshold}|geo_score:0|confidence:0.0|matched_geo_fields:[]"
 
     if score >= threshold:
-        return True, f"accepted|threshold:{threshold}|geo_score:{score}|matched_terms:{matched_terms}"
+        return True, f"accepted|city_type:{city_type}|threshold:{threshold}|geo_score:{score}|confidence:{round(confidence, 2)}|matched_geo_fields:{matched_terms}"
 
-    return False, f"rejected|threshold:{threshold}|rejection_reason:low_score|geo_score:{score}|matched_terms:{matched_terms}"
+    return False, f"rejected|city_type:{city_type}|threshold:{threshold}|rejection_reason:low_score|geo_score:{score}|confidence:{round(confidence, 2)}|matched_geo_fields:{matched_terms}"
 
 
 def location_matches_target(item: dict, target: dict) -> bool:
