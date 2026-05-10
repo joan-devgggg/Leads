@@ -8,7 +8,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from telegram import Update
-from telegram.error import TimedOut
+from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
 from config import PDF_OUTPUT_DIR
@@ -28,7 +28,11 @@ async def _safe_send_message(chat_id: int, context: ContextTypes.DEFAULT_TYPE, t
     try:
         await context.bot.send_message(chat_id=chat_id, text=text)
     except TimedOut:
-        logger.warning("TimedOut enviando mensaje chat_id=%s", chat_id)
+        logger.warning("TimedOut enviando mensaje chat_id=%s text=%r", chat_id, text)
+    except TelegramError:
+        logger.exception("TelegramError enviando mensaje chat_id=%s text=%r", chat_id, text)
+    except Exception:
+        logger.exception("Error inesperado enviando mensaje chat_id=%s text=%r", chat_id, text)
 
 
 async def _safe_send_document(chat_id: int, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> None:
@@ -36,6 +40,19 @@ async def _safe_send_document(chat_id: int, context: ContextTypes.DEFAULT_TYPE, 
         await context.bot.send_document(chat_id=chat_id, **kwargs)
     except TimedOut:
         logger.warning("TimedOut enviando documento chat_id=%s", chat_id)
+    except TelegramError:
+        logger.exception("TelegramError enviando documento chat_id=%s", chat_id)
+    except Exception:
+        logger.exception("Error inesperado enviando documento chat_id=%s", chat_id)
+
+
+def _log_task_result(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.warning("Background task cancelada")
+    except Exception:
+        logger.exception("Background task falló")
 
 _HELP = (
     "Envíame un mensaje indicando cuántos negocios quieres y de qué zona.\n\n"
@@ -77,7 +94,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         phone_prefix = req["phone_prefix"]
         cold_call_guide = req["cold_call_guide"]
 
-        await _safe_send_message(chat_id, context, f"Buscando {quantity} {business_type} en {zone}... [#{job_id}]")
+        try:
+            await _safe_send_message(chat_id, context, f"Buscando {quantity} {business_type} en {zone}... [#{job_id}]")
+        except Exception:
+            logger.exception("Error enviando mensaje intermedio job_id=%s", job_id)
 
         scrape_started = time.perf_counter()
         try:
@@ -171,7 +191,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         logger.info("job_id=%s flow_completed elapsed=%.2fs", job_id, time.perf_counter() - flow_started)
 
-    context.application.create_task(_background_job())
+    task = context.application.create_task(_background_job())
+    task.add_done_callback(_log_task_result)
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
