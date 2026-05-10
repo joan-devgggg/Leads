@@ -13,6 +13,8 @@ from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS, HTTP_TIM
 from json_utils import make_json_safe
 from geo_utils import build_geo_plan, extract_geo_fields, geo_match_reason, plan_to_points, resolve_geo_target
 from planner import build_adaptive_plan
+from keyword_profiles import country_keywords, country_languages, language_keywords
+from state_store import get_keyword_stats, update_keyword_stats
 from search_budget import SearchBudget
 
 BASE_URL = "https://api.apify.com/v2"
@@ -20,16 +22,7 @@ HEADERS  = {"Authorization": f"Bearer {APIFY_API_TOKEN}"}
 
 logger = logging.getLogger(__name__)
 
-SEARCH_KEYWORDS = [
-    "aesthetic clinic",
-    "beauty clinic",
-    "cosmetic clinic",
-    "dermatology clinic",
-    "laser clinic",
-    "plastic surgery clinic",
-    "skin clinic",
-    "medical spa",
-]
+SEARCH_KEYWORDS = ["aesthetic clinic", "beauty clinic", "cosmetic clinic", "dermatology clinic", "laser clinic", "plastic surgery clinic", "skin clinic", "medical spa"]
 
 
 @dataclass(frozen=True)
@@ -186,6 +179,41 @@ def _dedupe_key(item: dict) -> tuple[str, str, str]:
     return (_normalized_name(item), _normalized_phone(item), _normalized_website(item))
 
 
+def _keyword_score(keyword: str, country: str, languages: list[str]) -> float:
+    stats = get_keyword_stats(keyword, country)
+    leads = float(stats.get("leads_found", 0) or 0)
+    dupes = float(stats.get("duplicates", 0) or 0)
+    searches = float(stats.get("searches", 0) or 0)
+    effectiveness = leads / max(1.0, leads + dupes)
+    volume = min(1.0, leads / 25.0)
+    activity = min(1.0, searches / 10.0)
+    locale_bonus = 0.12 if any(keyword.lower() in language_keywords(lang) for lang in languages[:1]) else 0.0
+    return round((0.55 * effectiveness) + (0.2 * volume) + (0.13 * activity) + locale_bonus, 4)
+
+
+def _build_keywords(target: dict, business_type: str) -> list[str]:
+    country = (target.get("country_norm") or "").upper()
+    languages = country_languages(country)
+    ordered: list[str] = []
+    base = [business_type, f"best {business_type}", f"aesthetic {business_type}"]
+    pools = [country_keywords(country)] + [language_keywords(lang) for lang in languages] + [SEARCH_KEYWORDS] + [base]
+    scored: list[tuple[float, str]] = []
+    seen = set()
+    for pool in pools:
+        for keyword in pool:
+            key = keyword.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            scored.append((_keyword_score(keyword, country, languages), keyword))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    ordered.extend([kw for _, kw in scored])
+    logger.info("[KEYWORDS] country=%s languages=%s", country or "GLOBAL", ",".join(languages))
+    for kw in ordered[:10]:
+        logger.info('[KEYWORD_SCORE] "%s"=%.2f', kw, _keyword_score(kw, country, languages))
+    return ordered
+
+
 def _normalize_phone(raw: str, phone_prefix: str) -> str:
     if not raw:
         return ""
@@ -204,7 +232,7 @@ def _build_run_plan(business_type: str, zone_query: str, target: dict, requested
         plan = build_geo_plan(zone_query, requested_count)
         points = plan_to_points(plan)
     points = points[:max(1, budget.max_zones)]
-    keywords = SEARCH_KEYWORDS if target.get("city_norm") == "dubai" else [business_type, f"best {business_type}", f"aesthetic {business_type}"]
+    keywords = _build_keywords(target, business_type)
     run_plan = [
         {
             "keyword": keyword,
@@ -235,8 +263,11 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
 
     budget = SearchBudget.for_request(requested_count)
     run_plan = _build_run_plan(business_type, zone_query, target, requested_count, budget)
+    planned_keywords = list(dict.fromkeys(step.get("keyword", "") for step in run_plan if step.get("keyword")))
+    planned_zones = list(dict.fromkeys(step.get("coord").name for step in run_plan if step.get("coord")))
 
     seen_keys = set()
+    keyword_counters: dict[str, dict[str, int]] = {}
     results = []
     total_raw = 0
     discarded_location = 0
@@ -309,12 +340,14 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 key = _dedupe_key(p)
                 if key in seen_keys:
                     discarded_duplicates += 1
+                    keyword_counters.setdefault(step.get("keyword", ""), {"leads_found": 0, "duplicates": 0})["duplicates"] += 1
                     continue
                 accepted, reason = geo_match_reason(p, target)
                 if not accepted:
                     discarded_location += 1
                     continue
                 seen_keys.add(key)
+                keyword_counters.setdefault(step.get("keyword", ""), {"leads_found": 0, "duplicates": 0})["leads_found"] += 1
                 phone_raw = p.get("phone") or p.get("phoneUnformatted") or ""
                 results.append({
                     "place_id": place_id,
@@ -349,6 +382,9 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             if budget.early_stop_for_low_density():
                 break
 
+        if page > 0 and not next_page_token and budget.stop_reason == "":
+            budget.stop("planner_exhausted", remaining_zones=max(0, len(run_plan) - index), pending_planners=max(0, len(planned_zones) - index), keywords_missing=max(0, len(planned_keywords) - len(keyword_counters)), requests_left=max(0, budget.max_requests - budget.requests_used))
+
         logger.info("[COVERAGE] searched_zones=%s/%s", index, len(run_plan))
         budget.finish_zone(page_kept)
 
@@ -357,15 +393,24 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
         if budget.should_stop():
             break
 
-    budget.log_metrics()
-    if budget.stop_reason:
-        logger.info("[STOP] reason=%s", budget.stop_reason)
+    remaining_zones = max(0, len(run_plan) - budget.zones_used)
+    pending_planners = max(0, len(planned_zones) - budget.zones_used)
+    pending_keywords = max(0, len(planned_keywords) - len(keyword_counters))
+    requests_left = max(0, budget.max_requests - budget.requests_used)
+    budget.log_metrics(remaining_zones=remaining_zones, pending_planners=pending_planners, pending_keywords=pending_keywords, requests_left=requests_left)
+    country = (target.get("country_norm") or "").upper()
+    for keyword, counters in keyword_counters.items():
+        update_keyword_stats(keyword, country, leads_found=counters["leads_found"], duplicates=0, searches=1)
+    if budget.stop_reason and budget.stop_reason != "planner_exhausted":
+        logger.info("[STOP] reason=%s remaining_zones=%s pending_planners=%s keywords_missing=%s requests_left=%s", budget.stop_reason, remaining_zones, pending_planners, pending_keywords, requests_left)
+    elif budget.stop_reason == "planner_exhausted":
+        logger.info("[STOP] reason=planner_exhausted remaining_zones=%s pending_planners=%s keywords_missing=%s requests_left=%s", remaining_zones, pending_planners, pending_keywords, requests_left)
     logger.info(
         "[SUMMARY] total_raw=%s total_after_dedupe=%s duplicates_discarded=%s keywords_used=%s coordinates_used=%s pages_visited=%s completed_pct=%.2f",
         total_raw,
         len(results),
         discarded_duplicates,
-        ",".join(SEARCH_KEYWORDS if target["city_norm"] == "dubai" else [business_type, f"best {business_type}", f"aesthetic {business_type}"]),
+        ",".join(_build_keywords(target, business_type)[:3]),
         ",".join(step["coord"].name for step in run_plan if step.get("coord")),
         pages_visited,
         min(100.0, (len(results) / requested_count * 100.0) if requested_count else 0.0),

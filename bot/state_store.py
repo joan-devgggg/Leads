@@ -53,6 +53,19 @@ def init() -> None:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS keyword_stats (
+                    keyword TEXT NOT NULL,
+                    country TEXT NOT NULL,
+                    leads_found INTEGER NOT NULL DEFAULT 0,
+                    duplicates INTEGER NOT NULL DEFAULT 0,
+                    searches INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (keyword, country)
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS rate_limits (
                     bucket TEXT PRIMARY KEY,
                     last_request REAL NOT NULL DEFAULT 0,
@@ -120,6 +133,43 @@ def update_zone_stats(zone_key: str, *, leads_found: int = 0, duplicate_ratio: f
                 updated_at=excluded.updated_at
             """,
             (zone_key, current["leads_found"], current["duplicate_ratio"], current["density"], current["keyword_effectiveness"], current["response_time"], time.time()),
+        )
+
+
+def get_keyword_stats(keyword: str, country: str) -> dict:
+    init()
+    with _LOCK, _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM keyword_stats WHERE keyword = ? AND country = ?",
+            (keyword, country),
+        ).fetchone()
+        return dict(row) if row else {
+            "keyword": keyword,
+            "country": country,
+            "leads_found": 0,
+            "duplicates": 0,
+            "searches": 0,
+        }
+
+
+def update_keyword_stats(keyword: str, country: str, *, leads_found: int = 0, duplicates: int = 0, searches: int = 1) -> None:
+    init()
+    current = get_keyword_stats(keyword, country)
+    current["leads_found"] = int(current.get("leads_found", 0)) + int(leads_found)
+    current["duplicates"] = int(current.get("duplicates", 0)) + int(duplicates)
+    current["searches"] = int(current.get("searches", 0)) + int(searches)
+    with _LOCK, _conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO keyword_stats(keyword, country, leads_found, duplicates, searches, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(keyword, country) DO UPDATE SET
+                leads_found=excluded.leads_found,
+                duplicates=excluded.duplicates,
+                searches=excluded.searches,
+                updated_at=excluded.updated_at
+            """,
+            (keyword, country, current["leads_found"], current["duplicates"], current["searches"], time.time()),
         )
 
 
