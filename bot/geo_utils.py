@@ -33,7 +33,35 @@ _TARGET_ALIASES = {
         "jumeirah lake towers",
         "uae",
         "united arab emirates",
-    }
+    },
+    "valencia": {
+        "valencia",
+        "ciutat vella",
+        "eixample",
+        "campanar",
+        "benimaclet",
+        "ruzafa",
+        "russafa",
+        "el carmen",
+        "patraix",
+        "mestalla",
+        "poblats maritims",
+        "poblats marítims",
+    },
+    "buenos aires": {
+        "buenos aires",
+        "palermo",
+        "recoleta",
+        "belgrano",
+        "caballito",
+        "microcentro",
+        "nunez",
+        "nuñez",
+        "san telmo",
+        "barracas",
+        "villa crespo",
+        "puerto madero",
+    },
 }
 
 _STRONG_COUNTRY_REJECTIONS = {
@@ -52,6 +80,16 @@ _STRONG_COUNTRY_REJECTIONS = {
     "portugal",
     "turkey",
 }
+
+_LOCATION_PRIORITY = (
+    ("coordinates", 40),
+    ("formatted_address", 26),
+    ("locality", 22),
+    ("administrative_area", 16),
+    ("city", 12),
+    ("neighborhood", 10),
+    ("address", 6),
+)
 
 
 def _norm(text: str) -> str:
@@ -92,6 +130,9 @@ def extract_geo_fields(item: dict) -> dict:
         "address": (item.get("address") or "").strip(),
         "formatted_address": (item.get("formattedAddress") or item.get("formatted_address") or "").strip(),
         "city": (item.get("city") or item.get("locality") or item.get("neighborhood") or "").strip(),
+        "locality": (item.get("locality") or item.get("city") or item.get("town") or "").strip(),
+        "administrative_area": (item.get("administrativeArea") or item.get("administrative_area") or item.get("state") or item.get("region") or "").strip(),
+        "neighborhood": (item.get("neighborhood") or item.get("suburb") or item.get("district") or "").strip(),
         "country": (item.get("country") or item.get("countryName") or item.get("country_code") or item.get("countryCode") or "").strip(),
         "lat": lat,
         "lng": lng,
@@ -108,10 +149,13 @@ def _contains_any(haystack: str, needles: set[str]) -> str:
 def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     geo = extract_geo_fields(item)
     city = _norm(geo["city"])
+    locality = _norm(geo["locality"])
+    admin = _norm(geo["administrative_area"])
+    neighborhood = _norm(geo["neighborhood"])
     country = _norm(geo["country"])
     address = _norm(geo["address"])
     formatted = _norm(geo["formatted_address"])
-    combined = " | ".join(v for v in [city, country, address, formatted] if v)
+    coords = geo["lat"] is not None and geo["lng"] is not None
     target_city = target["city_norm"]
     target_country = target["country_norm"]
     aliases = set(target.get("aliases") or set())
@@ -119,24 +163,68 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     if target_country:
         aliases.add(target_country)
 
-    rejected_country = _contains_any(combined, _STRONG_COUNTRY_REJECTIONS - ({target_country} if target_country else set()))
+    matched_terms = []
+    score = 0
+
+    rejected_country = _contains_any(" | ".join(v for v in [country, address, formatted, admin] if v), _STRONG_COUNTRY_REJECTIONS - ({target_country} if target_country else set()))
     if rejected_country:
-        return False, f"rejected_country:{rejected_country}"
+        return False, f"rejection_reason:strong_country:{rejected_country}|geo_score:0|matched_terms:[]"
+
+    if coords:
+        score += 40
+        matched_terms.append("coordinates")
+
+    for field_name, field_score in _LOCATION_PRIORITY:
+        if field_name == "coordinates" or not field_score:
+            continue
+        if field_name == "formatted_address" and formatted:
+            if target_city and target_city in formatted:
+                score += field_score
+                matched_terms.append("formatted_address")
+        elif field_name == "locality" and locality:
+            if locality in aliases or any(alias in locality or locality in alias for alias in aliases):
+                score += field_score
+                matched_terms.append("locality")
+        elif field_name == "administrative_area" and admin:
+            if admin in aliases or any(alias in admin or admin in alias for alias in aliases):
+                score += field_score
+                matched_terms.append("administrative_area")
+        elif field_name == "city" and city:
+            if city in aliases or any(alias in city or city in alias for alias in aliases):
+                score += field_score
+                matched_terms.append("city_field")
+        elif field_name == "neighborhood" and neighborhood:
+            if neighborhood in aliases or any(alias in neighborhood or neighborhood in alias for alias in aliases):
+                score += field_score
+                matched_terms.append("neighborhood")
+        elif field_name == "address" and address:
+            if _contains_any(address, aliases):
+                score += field_score
+                matched_terms.append("address")
 
     if target_country:
         if country == target_country or target_country in country:
-            return True, "accepted_country_field"
-        if target_country in address or target_country in formatted:
-            return True, "accepted_country_address"
+            score += 24
+            matched_terms.append("country_field")
+        elif target_country in address or target_country in formatted or target_country in admin:
+            score += 16
+            matched_terms.append("country_context")
 
-    if city and any(alias == city or alias in city or city in alias for alias in aliases):
-        return True, "accepted_city_field"
+    if target_country and target_country in formatted:
+        score += 8
+        matched_terms.append("formatted_country")
 
-    matched_alias = _contains_any(address, aliases) or _contains_any(formatted, aliases)
-    if matched_alias:
-        return True, f"accepted_alias:{matched_alias}"
+    if target_country and target_country in address:
+        score += 5
+        matched_terms.append("address_country")
 
-    return False, "rejected_no_geo_match"
+    if not matched_terms:
+        return False, "rejection_reason:no_geo_signal|geo_score:0|matched_terms:[]"
+
+    if score >= 20:
+        return True, f"geo_score:{score}|matched_terms:{matched_terms}"
+
+    return False, f"rejection_reason:low_score|geo_score:{score}|matched_terms:{matched_terms}"
 
 
 def location_matches_target(item: dict, target: dict) -> bool:
