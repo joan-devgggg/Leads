@@ -4,7 +4,7 @@ Wrapper de Apify Google Maps Scraper, generalizado desde scrape_clinicas_dubai.p
 import time
 import logging
 import requests
-from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS
+from config import APIFY_API_TOKEN, APIFY_ACTOR_ID, APIFY_TIMEOUT_SECS, HTTP_TIMEOUT_SECS
 
 BASE_URL = "https://api.apify.com/v2"
 HEADERS  = {"Authorization": f"Bearer {APIFY_API_TOKEN}"}
@@ -46,6 +46,7 @@ def _run_actor(run_input: dict) -> list[dict]:
         headers=HEADERS,
         json=run_input,
         params={"timeout": APIFY_TIMEOUT_SECS},
+        timeout=HTTP_TIMEOUT_SECS,
     )
     _log_response("Apify create run", r)
     r.raise_for_status()
@@ -59,7 +60,7 @@ def _run_actor(run_input: dict) -> list[dict]:
     while time.time() < deadline:
         status_url = f"{BASE_URL}/actor-runs/{run_id}"
         logger.info("Apify GET %s", status_url)
-        s_resp = requests.get(status_url, headers=HEADERS)
+        s_resp = requests.get(status_url, headers=HEADERS, timeout=HTTP_TIMEOUT_SECS)
         _log_response("Apify run status", s_resp)
         s_resp.raise_for_status()
         s_payload = _safe_json(s_resp, "Apify run status")
@@ -78,6 +79,7 @@ def _run_actor(run_input: dict) -> list[dict]:
                 dataset_url,
                 headers=HEADERS,
                 params={"limit": 500, "clean": "true", "format": "json"},
+                timeout=HTTP_TIMEOUT_SECS,
             )
             _log_response("Apify dataset items", items_resp)
             items_resp.raise_for_status()
@@ -88,7 +90,7 @@ def _run_actor(run_input: dict) -> list[dict]:
             return items
         if status in ("FAILED", "ABORTED", "TIMED-OUT"):
             raise RuntimeError(f"Apify terminó con estado: {status}")
-        time.sleep(8)
+        time.sleep(5)
     raise TimeoutError("El actor de Apify no terminó a tiempo.")
 
 

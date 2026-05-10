@@ -5,7 +5,7 @@ junto con una guía comercial enfocada en automatización e IA para clínicas es
 import json
 import re
 import requests
-from config import OPENROUTER_API_KEY, OPENROUTER_MODEL
+from config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_TIMEOUT_SECS
 
 PROMPT = """Eres un asistente que extrae información de solicitudes de leads y genera una guía comercial premium.
 
@@ -63,7 +63,7 @@ def parse_request(user_message: str) -> dict:
             "model": OPENROUTER_MODEL,
             "messages": [{"role": "user", "content": prompt}],
         },
-        timeout=60,
+        timeout=OPENROUTER_TIMEOUT_SECS,
     )
     response.raise_for_status()
     text = response.json()["choices"][0]["message"]["content"].strip()
