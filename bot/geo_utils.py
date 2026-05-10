@@ -409,7 +409,15 @@ def build_geo_plan(zone: str, requested_count: int) -> dict:
         points.extend(_bbox_to_grid(bounds, 5, max_points=25))
         points = _dedupe_points(points)
 
-    cache_value = {"target": make_json_safe(target), "points": [make_json_safe(point.__dict__) for point in points]}
+    try:
+        serialized_points = []
+        for point in points:
+            serialized_points.append(make_json_safe(point))
+    except Exception:
+        logger.exception("[GEO] plan_serialization_failed zone=%s requested_count=%s points_types=%s", zone, requested_count, [type(point).__name__ for point in points])
+        raise
+
+    cache_value = {"target": make_json_safe(target), "points": serialized_points}
     _cache_set(f"plan::{_norm(zone)}::{requested_count}", cache_value)
     return cache_value
 

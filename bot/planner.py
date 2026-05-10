@@ -64,9 +64,18 @@ def build_country_plan(zone: str, requested_count: int, budget: SearchBudget | N
         nodes.append(PlanNode(city, city, city_score, plan["target"], plan["points"]))
 
     nodes.sort(key=lambda n: n.score, reverse=True)
+    serialized_nodes = []
+    for n in nodes:
+        try:
+            points = [make_json_safe(p) for p in n.points]
+        except Exception:
+            logger.exception("[PLANNER] point_serialization_failed zone=%s node=%s points_type=%s", zone, n.name, [type(p).__name__ for p in n.points])
+            raise
+        serialized_nodes.append({"name": n.name, "zone": n.zone, "score": n.score, "target": n.target, "points": points})
+
     payload = {
         "target": target,
-        "nodes": [{"name": n.name, "zone": n.zone, "score": n.score, "target": n.target, "points": [p.__dict__ for p in n.points]} for n in nodes],
+        "nodes": serialized_nodes,
     }
     cache_set(f"country_plan::{_norm(zone)}::{requested_count}", make_json_safe(payload))
     logger.info("[PLANNER] country=%s cities_selected=%s", country, len(nodes))
