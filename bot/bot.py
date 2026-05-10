@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from uuid import uuid4
 
 from telegram import Update
 from telegram.error import TimedOut
@@ -19,8 +20,8 @@ from pdf_generator import generate_pdf
 logger = logging.getLogger(__name__)
 
 
-def _mark(stage: str, started: float) -> None:
-    logger.info("stage=%s elapsed=%.2fs", stage, time.perf_counter() - started)
+def _mark(job_id: str, stage: str, started: float) -> None:
+    logger.info("job_id=%s stage=%s elapsed=%.2fs", job_id, stage, time.perf_counter() - started)
 
 
 async def _safe_send_message(chat_id: int, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
@@ -49,18 +50,19 @@ _HELP = (
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
     chat_id = update.effective_chat.id
+    job_id = uuid4().hex[:8]
 
     if not text:
         return
 
-    await _safe_send_message(chat_id, context, "Procesando tu solicitud...")
+    await _safe_send_message(chat_id, context, f"Procesando tu solicitud... [#{job_id}]")
 
     async def _background_job() -> None:
         flow_started = time.perf_counter()
         try:
             parse_started = time.perf_counter()
             req = await asyncio.to_thread(parse_request, text)
-            _mark("parse", parse_started)
+            _mark(job_id, "parse", parse_started)
         except ValueError as e:
             await _safe_send_message(chat_id, context, f"No entendí tu solicitud: {e}\n\n{_HELP}")
             return
@@ -75,7 +77,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         phone_prefix = req["phone_prefix"]
         cold_call_guide = req["cold_call_guide"]
 
-        await _safe_send_message(chat_id, context, f"Buscando {quantity} {business_type} en {zone}...")
+        await _safe_send_message(chat_id, context, f"Buscando {quantity} {business_type} en {zone}... [#{job_id}]")
 
         scrape_started = time.perf_counter()
         try:
@@ -86,7 +88,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 max_results=quantity + 30,
                 phone_prefix=phone_prefix,
             )
-            _mark("scrape", scrape_started)
+            _mark(job_id, "scrape", scrape_started)
         except Exception as e:
             logger.exception("Error en scraper")
             await _safe_send_message(chat_id, context, f"Error al buscar negocios en Google Maps: {e}")
@@ -96,7 +98,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             new_businesses = await asyncio.to_thread(filter_new, candidates)
             already_count = await asyncio.to_thread(count_sent, zone, business_type)
-            _mark("dedupe", dedupe_started)
+            _mark(job_id, "dedupe", dedupe_started)
         except Exception as e:
             logger.exception("Error en dedupe")
             await _safe_send_message(chat_id, context, f"Error al consultar la base de datos: {e}")
@@ -125,7 +127,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         save_started = time.perf_counter()
         try:
             await asyncio.to_thread(save, to_send)
-            _mark("save", save_started)
+            _mark(job_id, "save", save_started)
         except Exception:
             logger.exception("Error guardando en Supabase")
 
@@ -144,7 +146,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 cold_call_guide=cold_call_guide,
                 output_path=pdf_path,
             )
-            _mark("pdf", pdf_started)
+            _mark(job_id, "pdf", pdf_started)
         except Exception as e:
             logger.exception("Error generando PDF")
             await _safe_send_message(chat_id, context, f"Error al generar el PDF: {e}")
@@ -161,13 +163,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     filename=pdf_path.name,
                     caption=caption,
                 )
-            _mark("upload_send", send_started)
+            _mark(job_id, "upload_send", send_started)
         except Exception:
             logger.exception("Error enviando PDF")
             await _safe_send_message(chat_id, context, "PDF generado pero hubo un error al enviarlo.")
             return
 
-        logger.info("flow_completed elapsed=%.2fs", time.perf_counter() - flow_started)
+        logger.info("job_id=%s flow_completed elapsed=%.2fs", job_id, time.perf_counter() - flow_started)
 
     context.application.create_task(_background_job())
 
