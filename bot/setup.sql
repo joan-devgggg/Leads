@@ -6,6 +6,11 @@ CREATE TABLE IF NOT EXISTS negocios (
     name            TEXT NOT NULL,
     phone           TEXT DEFAULT '',
     address         TEXT DEFAULT '',
+    formatted_address TEXT DEFAULT '',
+    city            TEXT DEFAULT '',
+    country         TEXT DEFAULT '',
+    latitude        REAL,
+    longitude       REAL,
     zone            TEXT NOT NULL,
     business_type   TEXT NOT NULL,
     website         TEXT DEFAULT '',
@@ -14,5 +19,5 @@ CREATE TABLE IF NOT EXISTS negocios (
     sent_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_place_id  ON negocios(place_id);
-CREATE INDEX        IF NOT EXISTS idx_zone_type ON negocios(zone, business_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_negocios_place_id  ON negocios(place_id);
+CREATE INDEX        IF NOT EXISTS idx_negocios_zone_type ON negocios(zone, business_type);

@@ -314,7 +314,6 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 logger.exception("[STOP] reason=provider_failure")
                 budget.stop_reason = budget.stop_reason or "provider_failure"
                 break
-            budget.record_request(len(raw))
             total_raw += len(raw)
             logger.info("[SEARCH] keyword=%s coord=%s radius=%s page=%s results_received=%s", step.get("keyword"), coord.name if coord else "", radius, page, len(raw))
 
@@ -367,6 +366,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 })
                 page_kept += 1
 
+            budget.record_request(page_kept)
             token = _detect_next_page_token(raw[0] if raw else {})
             logger.info("[PAGINATION] next_page_token=%s", bool(token))
             logger.info("[FILTER] discarded_missing_name=%s discarded_invalid_coords=%s", discarded_missing_name, discarded_invalid_coords)
