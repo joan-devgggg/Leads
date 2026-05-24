@@ -1,4 +1,4 @@
-python-telegram-bot==22.7
+python-telegram-bot[webhooks]==22.7
 supabase==2.30.0
 reportlab==4.1.0
 python-dotenv==1.0.0
