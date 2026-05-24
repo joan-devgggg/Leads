@@ -12,8 +12,8 @@ def _require(key: str) -> str:
     return val
 
 TELEGRAM_BOT_TOKEN  = _require("TELEGRAM_BOT_TOKEN")
-SUPABASE_URL        = _require("SUPABASE_URL")
-SUPABASE_KEY        = _require("SUPABASE_KEY")
+SUPABASE_URL        = _require("SUPABASE_URL").strip()
+SUPABASE_KEY        = _require("SUPABASE_KEY").strip()
 APIFY_API_TOKEN     = _require("APIFY_API_TOKEN")
 OPENROUTER_API_KEY  = _require("OPENROUTER_API_KEY")
 OPENROUTER_MODEL    = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")

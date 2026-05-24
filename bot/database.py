@@ -67,20 +67,22 @@ def filter_new(candidates: list[dict]) -> list[dict]:
     if len(unique_keys) != len(candidate_keys):
         logger.info("duplicates_descartados_input=%s", len(candidate_keys) - len(unique_keys))
 
-    place_ids = sorted({k[0] for k in unique_keys if k[0]})
-    names = sorted({k[1] for k in unique_keys if k[1]})
-    phones = sorted({k[2] for k in unique_keys if k[2]})
-    websites = sorted({k[3] for k in unique_keys if k[3]})
+    # Use raw (non-normalized) values for Supabase queries — the DB stores raw data.
+    # Normalized keys are only used for in-memory comparison after retrieval.
+    place_ids_raw = sorted({b.get("place_id", "") for b in candidates if b.get("place_id")})
+    names_raw = sorted({b.get("name", "") for b in candidates if b.get("name")})
+    phones_raw = sorted({b.get("phone", "") for b in candidates if b.get("phone")})
+    websites_raw = sorted({b.get("website", "") for b in candidates if b.get("website")})
 
     existing_rows = []
-    if place_ids:
-        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("place_id", place_ids)).data)
-    if names:
-        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("name", names)).data)
-    if phones:
-        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("phone", phones)).data)
-    if websites:
-        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("website", websites)).data)
+    if place_ids_raw:
+        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("place_id", place_ids_raw)).data)
+    if names_raw:
+        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("name", names_raw)).data)
+    if phones_raw:
+        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("phone", phones_raw)).data)
+    if websites_raw:
+        existing_rows.extend(_with_timeout(db.table("negocios").select("place_id,name,phone,website").in_("website", websites_raw)).data)
     existing_keys = {_dedupe_key(row) for row in existing_rows}
 
     filtered = [b for b in candidates if _dedupe_key(b) not in existing_keys]

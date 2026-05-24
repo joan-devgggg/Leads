@@ -543,7 +543,7 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     target_city = target["city_norm"]
     target_country = target["country_norm"]
     city_type = target.get("city_type") or classify_city_type(target.get("city", ""))
-    threshold = int(target.get("threshold") or _REGIONAL_THRESHOLDS["medium"])
+    threshold = int(target.get("threshold") or _REGIONAL_THRESHOLDS.get("medium_city", 24))
     aliases = set(target.get("aliases") or set())
     aliases.add(target_city)
     if target_country:

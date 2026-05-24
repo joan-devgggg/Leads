@@ -46,7 +46,10 @@ def _score_zone(zone: str, requested_count: int) -> float:
 def build_country_plan(zone: str, requested_count: int, budget: SearchBudget | None = None) -> dict:
     target = resolve_geo_target(zone)
     country = _norm(target.get("country") or target.get("raw") or zone)
-    if country not in _BIG_COUNTRIES:
+    kind = target.get("kind") or "small_city"
+    # Only expand to all cities when the zone itself is a country or region,
+    # not when the zone merely belongs to a known country (e.g. "Valencia" → country="spain").
+    if kind not in {"country", "region"} or country not in _BIG_COUNTRIES:
         return build_geo_plan(zone, requested_count)
 
     cities = _BIG_COUNTRIES[country]
