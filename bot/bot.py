@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from config import PDF_OUTPUT_DIR
 from parser import parse_request
 from scraper import scrape_businesses
-from database import filter_new, save, count_sent
+from database import filter_new, save, count_sent, is_authorized
 from pdf_generator import generate_pdf
 
 logger = logging.getLogger(__name__)
@@ -67,9 +67,14 @@ _HELP = (
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id if update.effective_user else None
     job_id = uuid4().hex[:8]
 
     if not text:
+        return
+
+    if not user_id or not await asyncio.to_thread(is_authorized, user_id):
+        await _safe_send_message(chat_id, context, "No tienes acceso a este bot.")
         return
 
     await _safe_send_message(chat_id, context, f"Procesando tu solicitud... [#{job_id}]")
@@ -193,4 +198,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id or not await asyncio.to_thread(is_authorized, user_id):
+        await update.message.reply_text("No tienes acceso a este bot.")
+        return
     await update.message.reply_text(_HELP)
