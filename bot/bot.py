@@ -92,8 +92,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         business_type = req["business_type"]
         zone = req["zone"]
         phone_prefix = req["phone_prefix"]
-        cold_call_guide = req["cold_call_guide"]
-
         try:
             await _safe_send_message(chat_id, context, f"Buscando {quantity} {business_type} en {zone}... [#{job_id}]")
         except Exception:
@@ -163,7 +161,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 businesses=to_send,
                 business_type=business_type,
                 zone=zone,
-                cold_call_guide=cold_call_guide,
                 output_path=pdf_path,
             )
             _mark(job_id, "pdf", pdf_started)
