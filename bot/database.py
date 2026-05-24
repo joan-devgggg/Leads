@@ -24,10 +24,7 @@ def _get_client():
 
 
 def _with_timeout(query, timeout_secs: float = 45):
-    try:
-        return query.execute(timeout=timeout_secs)
-    except TypeError:
-        return query.execute()
+    return query.execute()
 
 
 def _normalize_text(text: str) -> str:

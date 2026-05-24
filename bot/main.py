@@ -3,6 +3,8 @@ Punto de entrada del bot de Telegram para generación de leads.
 Ejecutar: python main.py
 """
 import logging
+import time
+from telegram.error import Conflict
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from telegram.request import HTTPXRequest
 from config import (
@@ -20,6 +22,10 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+logger = logging.getLogger(__name__)
+
+_CONFLICT_RETRY_SECS = 30
+
 
 def main() -> None:
     request = HTTPXRequest(
@@ -35,7 +41,16 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Bot de leads iniciado. Ctrl+C para detener.")
-    app.run_polling(drop_pending_updates=True)
+    while True:
+        try:
+            app.run_polling(drop_pending_updates=True)
+            break
+        except Conflict:
+            logger.warning(
+                "Conflicto: otra instancia del bot está activa. "
+                "Reintentando en %ds...", _CONFLICT_RETRY_SECS
+            )
+            time.sleep(_CONFLICT_RETRY_SECS)
 
 
 if __name__ == "__main__":
