@@ -194,11 +194,10 @@ def _keyword_score(keyword: str, country: str, languages: list[str]) -> float:
 def _build_keywords(target: dict, business_type: str) -> list[str]:
     country = (target.get("country_norm") or "").upper()
     languages = country_languages(country)
-    ordered: list[str] = []
-    base = [business_type, f"best {business_type}", f"aesthetic {business_type}"]
-    pools = [country_keywords(country)] + [language_keywords(lang) for lang in languages] + [SEARCH_KEYWORDS] + [base]
+    base = [business_type, f"best {business_type}"]
+    pools = [country_keywords(country)] + [language_keywords(lang) for lang in languages] + [SEARCH_KEYWORDS]
     scored: list[tuple[float, str]] = []
-    seen = set()
+    seen = set(kw.strip().lower() for kw in base if kw.strip())
     for pool in pools:
         for keyword in pool:
             key = keyword.strip().lower()
@@ -207,7 +206,8 @@ def _build_keywords(target: dict, business_type: str) -> list[str]:
             seen.add(key)
             scored.append((_keyword_score(keyword, country, languages), keyword))
     scored.sort(key=lambda item: item[0], reverse=True)
-    ordered.extend([kw for _, kw in scored])
+    # business_type always first so the user's requested type is searched before generic keywords
+    ordered = [kw for kw in base if kw.strip()] + [kw for _, kw in scored]
     logger.info("[KEYWORDS] country=%s languages=%s", country or "GLOBAL", ",".join(languages))
     for kw in ordered[:10]:
         logger.info('[KEYWORD_SCORE] "%s"=%.2f', kw, _keyword_score(kw, country, languages))
