@@ -406,6 +406,11 @@ def resolve_geo_target(zone: str) -> dict:
     bbox = [float(v) for v in (item.get("boundingbox") or [])]
     center = (float(item.get("lat")), float(item.get("lon"))) if item.get("lat") and item.get("lon") else None
     target = parse_target_location(raw)
+    # Enrich country from Nominatim — works for any city without needing _COUNTRY_ALIASES
+    nominatim_country = _norm(address.get("country") or "")
+    if nominatim_country and not target.get("country_norm"):
+        target["country_norm"] = nominatim_country
+        target["country"] = address.get("country") or ""
     target.update({
         "display_name": item.get("display_name") or raw,
         "kind": kind,
@@ -554,9 +559,15 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     score = 0
     confidence = 0.0
 
-    rejected_country = _contains_any(" | ".join(v for v in [country, address, formatted, admin] if v), _STRONG_COUNTRY_REJECTIONS - ({target_country} if target_country else set()))
-    if rejected_country:
-        return False, f"rejection_reason:strong_country:{rejected_country}|geo_score:0|matched_terms:[]"
+    # Only apply strong-country rejection when we know the target country;
+    # otherwise we'd silently reject every result for cities we haven't hard-coded.
+    if target_country:
+        rejected_country = _contains_any(
+            " | ".join(v for v in [country, address, formatted, admin] if v),
+            _STRONG_COUNTRY_REJECTIONS - {target_country},
+        )
+        if rejected_country:
+            return False, f"rejection_reason:strong_country:{rejected_country}|geo_score:0|matched_terms:[]"
 
     if coords:
         score += 40
