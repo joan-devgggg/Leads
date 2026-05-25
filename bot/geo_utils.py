@@ -30,6 +30,7 @@ _COUNTRY_ALIASES = {
     "espana": "spain",
     "madrid": "spain",
     "barcelona": "spain",
+    "valencia": "spain",
     "seville": "spain",
     "sevilla": "spain",
     "bilbao": "spain",
