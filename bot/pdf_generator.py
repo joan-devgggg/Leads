@@ -2,6 +2,7 @@
 Generador de PDF para clínicas estéticas con enfoque en automatización e IA.
 Estructura: portada + listado de negocios.
 """
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +40,33 @@ _th     = ParagraphStyle(
     fontName="Helvetica-Bold",
 )
 
+_DAY_MAP = {
+    "monday": "Lu", "tuesday": "Ma", "wednesday": "Mi",
+    "thursday": "Ju", "friday": "Vi", "saturday": "Sá", "sunday": "Do",
+}
+
+def _ampm_to_24h(s: str) -> str:
+    """Convert '9:00 AM – 8:00 PM' → '9:00-20:00'."""
+    def _convert(m: re.Match) -> str:
+        h, mins, period = int(m.group(1)), m.group(2), m.group(3).upper()
+        if period == "PM" and h != 12:
+            h += 12
+        elif period == "AM" and h == 12:
+            h = 0
+        return f"{h}:{mins}"
+    return re.sub(r"(\d{1,2}):(\d{2})\s*(AM|PM)", _convert, s).replace(" – ", "-").replace(" — ", "-")
+
+
+def _format_opening_hours(opening_hours: list) -> str:
+    if not opening_hours:
+        return "—"
+    lines = []
+    for entry in opening_hours:
+        day = _DAY_MAP.get((entry.get("day") or "").lower(), (entry.get("day") or "")[:2])
+        hours = _ampm_to_24h(entry.get("hours") or "Cerrado")
+        lines.append(f"<b>{day}</b>: {hours}")
+    return "<br/>".join(lines)
+
 
 def generate_pdf(
     businesses: list[dict],
@@ -70,21 +98,23 @@ def generate_pdf(
     # ── Listado de negocios ──────────────────────────────────────────────────
     story.append(Paragraph(f"Listado de {len(businesses)} negocios", _h2))
 
-    COLS = [0.5*cm, 5.5*cm, 3.5*cm, 2.3*cm, 4.7*cm]
+    COLS = [0.5*cm, 4.5*cm, 3.0*cm, 1.8*cm, 3.5*cm, 4.7*cm]
     header = [
         Paragraph("#", _th),
         Paragraph("Negocio", _th),
         Paragraph("Teléfono", _th),
         Paragraph("Rating", _th),
         Paragraph("Web / Dirección", _th),
+        Paragraph("Horario", _th),
     ]
     rows = [header]
 
     for i, b in enumerate(businesses, 1):
-        rating_str  = f"★ {b['rating']}  ({b['reviews_count']} reviews)" if b.get("rating") else "—"
+        rating_str  = f"★ {b['rating']}  ({b['reviews_count']} rev.)" if b.get("rating") else "—"
         web_addr    = b.get("website") or b.get("address") or "—"
         phone_str   = b["phone"] if b.get("phone") else "⚠ Sin teléfono"
         phone_color = "#CC0000" if not b.get("phone") else "#006600"
+        hours_str   = _format_opening_hours(b.get("opening_hours") or [])
 
         rows.append([
             Paragraph(str(i), _body),
@@ -94,7 +124,8 @@ def generate_pdf(
             ),
             Paragraph(f"<font color='{phone_color}'>{phone_str}</font>", _body),
             Paragraph(rating_str, _body),
-            Paragraph(web_addr[:55] + ("…" if len(web_addr) > 55 else ""), _body),
+            Paragraph(web_addr[:40] + ("…" if len(web_addr) > 40 else ""), _body),
+            Paragraph(hours_str, _body),
         ])
 
     tbl = Table(rows, colWidths=COLS, repeatRows=1)
@@ -107,6 +138,7 @@ def generate_pdf(
         ("VALIGN",        (0, 0), (-1, -1), "TOP"),
         ("ALIGN",         (0, 0), (0, -1),  "CENTER"),
         ("ALIGN",         (2, 1), (3, -1),  "CENTER"),
+        ("FONTSIZE",      (5, 1), (5, -1),  7),
         ("TOPPADDING",    (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING",   (0, 0), (-1, -1), 5),

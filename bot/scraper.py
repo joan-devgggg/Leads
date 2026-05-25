@@ -363,6 +363,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                     "website": (p.get("website") or "").strip(),
                     "rating": p.get("totalScore") or None,
                     "reviews_count": p.get("reviewsCount") or 0,
+                    "opening_hours": p.get("openingHours") or [],
                 })
                 page_kept += 1
 
