@@ -93,7 +93,11 @@ async def _run_webhook_async() -> None:
             logger.exception("Error procesando update de Telegram")
         return web.Response(status=200)
 
+    async def webhook_healthcheck(request):
+        return web.Response(text="OK", status=200)
+
     aio_app.router.add_get("/", healthcheck)
+    aio_app.router.add_get("/webhook", webhook_healthcheck)
     aio_app.router.add_post("/webhook", webhook_handler)
 
     runner = web.AppRunner(aio_app)
