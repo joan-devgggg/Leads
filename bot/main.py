@@ -63,6 +63,14 @@ async def _error_handler(update, context):
         logger.warning("Conflicto Telegram (múltiples instancias detectadas): %s", context.error)
         return
     logger.exception("Error no controlado en el bot", exc_info=context.error)
+    if update and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Error inesperado. Inténtalo de nuevo en unos segundos.",
+            )
+        except Exception:
+            pass
 
 
 async def _run_webhook_async() -> None:

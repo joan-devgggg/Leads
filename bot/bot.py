@@ -73,7 +73,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return
 
-    if not user_id or not await asyncio.to_thread(is_authorized, user_id):
+    try:
+        authorized = user_id and await asyncio.to_thread(is_authorized, user_id)
+    except Exception:
+        logger.exception("Error comprobando autorización para user_id=%s", user_id)
+        await _safe_send_message(chat_id, context, "Error interno al verificar acceso. Inténtalo de nuevo.")
+        return
+
+    if not authorized:
+        logger.warning("Acceso denegado para user_id=%s", user_id)
         await _safe_send_message(chat_id, context, "No tienes acceso a este bot.")
         return
 
