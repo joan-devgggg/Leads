@@ -248,7 +248,7 @@ def _build_run_plan(business_type: str, zone_query: str, target: dict, requested
     return run_plan
 
 
-def scrape_businesses(business_type: str, zone: str, requested_count: int, phone_prefix: str = "") -> list[dict]:
+def scrape_businesses(business_type: str, zone: str, requested_count: int, phone_prefix: str = "") -> tuple[list[dict], str]:
     """
     Busca negocios en Google Maps vía Apify.
     Devuelve lista normalizada con place_id, name, phone, address, zone,
@@ -277,8 +277,6 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
     pages_visited = 0
 
     for index, step in enumerate(run_plan, start=1):
-        if not budget.allow_zone():
-            break
         if not budget.start_zone():
             break
         search_string = step["search_string"]
@@ -298,7 +296,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             logger.info("[ZONE] searching=%s", coord.name if coord else zone_query)
             payload = make_json_safe({
                 "searchStringsArray": [search_string],
-                "maxCrawledPlacesPerSearch": 100,
+                "maxCrawledPlacesPerSearch": 200,
                 "language": "en",
                 "maxImages": 0,
                 "maxReviews": 0,
@@ -380,8 +378,6 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             next_page_token = token
             time.sleep(2)
 
-            if budget.early_stop_for_low_density():
-                break
 
         if page > 0 and not next_page_token and budget.stop_reason == "":
             budget.stop("planner_exhausted", remaining_zones=max(0, len(run_plan) - index), pending_planners=max(0, len(planned_zones) - index), keywords_missing=max(0, len(planned_keywords) - len(keyword_counters)), requests_left=max(0, budget.max_requests - budget.requests_used))
@@ -391,7 +387,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
 
         if len(results) >= requested_count:
             break
-        if budget.should_stop():
+        if budget.stop_reason in ("provider_failure", "max_runtime", "max_api_calls", "max_requests"):
             break
 
     remaining_zones = max(0, len(run_plan) - budget.zones_used)
@@ -416,4 +412,10 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
         pages_visited,
         min(100.0, (len(results) / requested_count * 100.0) if requested_count else 0.0),
     )
-    return results
+    scrape_warning = ""
+    if len(results) < requested_count:
+        scrape_warning = (
+            f"⚠️ Solo encontré {len(results)} negocios nuevos de los {requested_count} pedidos. "
+            "Google Maps no tiene más resultados disponibles para esta búsqueda en esta zona."
+        )
+    return results, scrape_warning

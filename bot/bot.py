@@ -114,21 +114,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         scrape_started = time.perf_counter()
         try:
             all_candidates_map: dict[str, dict] = {}
+            has_scrape_warning = False
             for query in business_queries:
                 logger.info("job_id=%s scraping query=%r zone=%r", job_id, query, zone)
-                query_results = await asyncio.to_thread(
+                query_results, query_warning = await asyncio.to_thread(
                     scrape_businesses,
                     business_type=query,
                     zone=zone,
                     requested_count=quantity,
                     phone_prefix=phone_prefix,
                 )
+                if query_warning:
+                    has_scrape_warning = True
                 for item in query_results:
                     pid = item.get("place_id") or ""
                     if pid not in all_candidates_map:
                         item["business_type"] = business_type
                         all_candidates_map[pid] = item
             candidates = list(all_candidates_map.values())
+            scrape_warning = (
+                f"⚠️ Solo encontré {len(candidates)} negocios nuevos de los {quantity} pedidos. "
+                "Google Maps no tiene más resultados disponibles para esta búsqueda en esta zona."
+            ) if has_scrape_warning and len(candidates) < quantity else ""
             logger.info("job_id=%s queries=%s total_candidates=%s", job_id, len(business_queries), len(candidates))
             _mark(job_id, "scrape", scrape_started)
         except Exception as e:
@@ -192,6 +199,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.exception("Error generando PDF")
             await _safe_send_message(chat_id, context, f"Error al generar el PDF: {e}")
             return
+
+        if scrape_warning:
+            await _safe_send_message(chat_id, context, scrape_warning)
 
         send_started = time.perf_counter()
         caption = f"{len(to_send)} {business_type} en {zone} — {datetime.now().strftime('%d/%m/%Y')}"
