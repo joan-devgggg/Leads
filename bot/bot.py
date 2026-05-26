@@ -103,6 +103,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         quantity = req["quantity"]
         business_type = req["business_type"]
+        business_queries = req.get("business_queries") or [business_type]
         zone = req["zone"]
         phone_prefix = req["phone_prefix"]
         try:
@@ -112,13 +113,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         scrape_started = time.perf_counter()
         try:
-            candidates = await asyncio.to_thread(
-                scrape_businesses,
-                business_type=business_type,
-                zone=zone,
-                requested_count=quantity,
-                phone_prefix=phone_prefix,
-            )
+            all_candidates_map: dict[str, dict] = {}
+            for query in business_queries:
+                logger.info("job_id=%s scraping query=%r zone=%r", job_id, query, zone)
+                query_results = await asyncio.to_thread(
+                    scrape_businesses,
+                    business_type=query,
+                    zone=zone,
+                    requested_count=quantity,
+                    phone_prefix=phone_prefix,
+                )
+                for item in query_results:
+                    pid = item.get("place_id") or ""
+                    if pid not in all_candidates_map:
+                        item["business_type"] = business_type
+                        all_candidates_map[pid] = item
+            candidates = list(all_candidates_map.values())
+            logger.info("job_id=%s queries=%s total_candidates=%s", job_id, len(business_queries), len(candidates))
             _mark(job_id, "scrape", scrape_started)
         except Exception as e:
             logger.exception("Error en scraper")

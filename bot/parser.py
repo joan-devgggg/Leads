@@ -7,19 +7,28 @@ import re
 import requests
 from config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_TIMEOUT_SECS
 
-PROMPT = """Eres un asistente que extrae información de solicitudes de leads y genera una guía comercial premium.
+SYSTEM_PROMPT = """
+Eres un asistente que extrae información de solicitudes de leads y genera una guía comercial premium.
 
 El usuario envía un mensaje pidiendo un listado de negocios. Debes extraer:
 - quantity: número entero de negocios solicitados (entre 1 y 200)
-- business_type: tipo de negocio en inglés, plural, minúsculas (ej: "aesthetic clinics", "restaurants", "plumbers")
- - zone: cualquier ubicación global (ciudad, región, país, estado o área)
-- phone_prefix: prefijo telefónico internacional del país (ej: "+971" para UAE, "+34" para España, "+33" para Francia)
+- business_queries: lista de búsquedas en inglés para Google Maps que cubran TODOS los subtipos del negocio pedido. Minúsculas, plural. Máximo 8 queries, mínimo 3 si el sector lo permite.
+- business_type: etiqueta corta en inglés para mostrar al usuario (ej: "aesthetic clinics")
+- zone: cualquier ubicación global (ciudad, región, país, estado o área)
+- phone_prefix: prefijo telefónico internacional del país (ej: "+34" para España)
+
+EXPANSIÓN DE QUERIES — ejemplos obligatorios:
+- Si piden "clínicas estéticas" → business_queries: ["aesthetic clinics", "plastic surgery clinics", "cosmetic surgery centers", "beauty medical clinics", "dermatology clinics", "laser hair removal clinics", "anti-aging clinics", "facial treatment clinics"]
+- Si piden "restaurantes" → business_queries: ["restaurants", "bistros", "gastrobars", "brasseries", "diners", "taverns"]
+- Si piden "abogados" → business_queries: ["law firms", "lawyers office", "legal advisors", "attorneys", "notary offices"]
+- Si piden "dentistas" → business_queries: ["dental clinics", "dentists", "orthodontic clinics", "dental implant centers", "pediatric dentistry"]
+- Para cualquier otro sector: desglosa en todos los subtipos y sinónimos relevantes en Google Maps.
 
 Además, genera una guía comercial adaptada específicamente a ese tipo de negocio y zona, con exactamente 6 puntos:
 1. Hora ideal (con horario local y días laborables del país)
 2. Apertura (cómo iniciar la llamada de forma directa y moderna)
 3. Pitch 15 seg (enfoque en automatización, IA, ahorro de tiempo y más citas)
-4. Objeción común y cómo manejarla (la más frecuente para ese sector, sin enfoque de captación tradicional)
+4. Objeción común y cómo manejarla (la más frecuente para ese sector)
 5. Cierre (cómo avanzar hacia una demo o reunión breve)
 6. CRM (cómo registrar el resultado y el siguiente paso)
 
@@ -27,16 +36,17 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
 {
   "quantity": <int>,
   "business_type": "<string>",
+  "business_queries": ["<query1>", "<query2>", "..."],
   "zone": "<string>",
   "phone_prefix": "<string>",
-    "cold_call_guide": [
-     ["Hora ideal", "<texto>"],
-     ["Apertura", "<texto>"],
-     ["Pitch 15 seg", "<texto>"],
-     ["Objeción común", "<texto>"],
-     ["Cierre", "<texto>"],
-     ["CRM", "<texto>"]
-   ]
+  "cold_call_guide": [
+    ["Hora ideal", "<texto>"],
+    ["Apertura", "<texto>"],
+    ["Pitch 15 seg", "<texto>"],
+    ["Objeción común", "<texto>"],
+    ["Cierre", "<texto>"],
+    ["CRM", "<texto>"]
+  ]
 }
 
 Si no puedes extraer quantity, business_type o zone del mensaje, devuelve:
@@ -48,10 +58,10 @@ Mensaje del usuario: "{message}"
 
 def parse_request(user_message: str) -> dict:
     """
-    Devuelve dict con: quantity, business_type, zone, phone_prefix, cold_call_guide.
+    Devuelve dict con: quantity, business_type, business_queries, zone, phone_prefix, cold_call_guide.
     Lanza ValueError si el mensaje no puede parsearse.
     """
-    prompt = PROMPT.replace("{message}", user_message.replace('"', "'"))
+    prompt = SYSTEM_PROMPT.replace("{message}", user_message.replace('"', "'"))
 
     response = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -88,10 +98,15 @@ def parse_request(user_message: str) -> dict:
     if not data.get("business_type") or not data.get("zone"):
         raise ValueError("Especifica el tipo de negocio y la zona (ej: 'Dame 15 clínicas en Barcelona')")
 
+    business_queries = data.get("business_queries") or []
+    if not isinstance(business_queries, list) or not business_queries:
+        business_queries = [data["business_type"].lower().strip()]
+
     zone = data["zone"].strip()
     return {
         "quantity": quantity,
         "business_type": data["business_type"].lower().strip(),
+        "business_queries": [q.lower().strip() for q in business_queries if q],
         "zone": zone,
         "phone_prefix": data.get("phone_prefix", ""),
         "cold_call_guide": data.get("cold_call_guide", []),
