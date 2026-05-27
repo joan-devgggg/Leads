@@ -285,6 +285,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
 
         next_page_token = ""
         page = 0
+        page_kept = 0
         while True:
             if len(results) >= requested_count or budget.should_stop():
                 break
