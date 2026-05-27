@@ -11,11 +11,10 @@ from telegram import Update
 from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
-from config import PDF_OUTPUT_DIR
 from parser import parse_request
 from scraper import scrape_businesses
 from database import filter_new, save, count_sent, is_authorized
-from pdf_generator import generate_pdf
+from pdf_generator import generate_pdf_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -34,16 +33,6 @@ async def _safe_send_message(chat_id: int, context: ContextTypes.DEFAULT_TYPE, t
     except Exception:
         logger.exception("Error inesperado enviando mensaje chat_id=%s text=%r", chat_id, text)
 
-
-async def _safe_send_document(chat_id: int, context: ContextTypes.DEFAULT_TYPE, **kwargs) -> None:
-    try:
-        await context.bot.send_document(chat_id=chat_id, **kwargs)
-    except TimedOut:
-        logger.warning("TimedOut enviando documento chat_id=%s", chat_id)
-    except TelegramError:
-        logger.exception("TelegramError enviando documento chat_id=%s", chat_id)
-    except Exception:
-        logger.exception("Error inesperado enviando documento chat_id=%s", chat_id)
 
 
 def _log_task_result(task: asyncio.Task) -> None:
@@ -183,16 +172,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_zone = zone.replace(" ", "_").replace("/", "-")
         safe_type = business_type.replace(" ", "_").replace("/", "-")
-        pdf_path = PDF_OUTPUT_DIR / f"leads_{safe_zone}_{safe_type}_{timestamp}.pdf"
+        pdf_filename = f"leads_{safe_zone}_{safe_type}_{timestamp}.pdf"
 
         pdf_started = time.perf_counter()
         try:
-            await asyncio.to_thread(
-                generate_pdf,
+            pdf_buf = await asyncio.to_thread(
+                generate_pdf_bytes,
                 businesses=to_send,
                 business_type=business_type,
                 zone=zone,
-                output_path=pdf_path,
             )
             _mark(job_id, "pdf", pdf_started)
         except Exception as e:
@@ -203,22 +191,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if scrape_warning:
             await _safe_send_message(chat_id, context, scrape_warning)
 
+        await _safe_send_message(chat_id, context, "PDF generado, enviando...")
+
         send_started = time.perf_counter()
         caption = f"{len(to_send)} {business_type} en {zone} — {datetime.now().strftime('%d/%m/%Y')}"
         try:
-            with open(pdf_path, "rb") as f:
-                await _safe_send_document(
-                    chat_id,
-                    context,
-                    document=f,
-                    filename=pdf_path.name,
-                    caption=caption,
-                )
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=pdf_buf,
+                filename=pdf_filename,
+                caption=caption,
+                write_timeout=120,
+                read_timeout=60,
+            )
             _mark(job_id, "upload_send", send_started)
+        except TimedOut:
+            logger.warning("TimedOut enviando documento chat_id=%s", chat_id)
+            await _safe_send_message(chat_id, context, "El PDF se generó pero el envío tardó demasiado. Inténtalo de nuevo.")
+        except TelegramError:
+            logger.exception("TelegramError enviando documento chat_id=%s", chat_id)
+            await _safe_send_message(chat_id, context, "Error de Telegram al enviar el PDF. Inténtalo de nuevo.")
         except Exception:
-            logger.exception("Error enviando PDF")
+            logger.exception("Error inesperado enviando documento chat_id=%s", chat_id)
             await _safe_send_message(chat_id, context, "PDF generado pero hubo un error al enviarlo.")
-            return
 
         logger.info("job_id=%s flow_completed elapsed=%.2fs", job_id, time.perf_counter() - flow_started)
 

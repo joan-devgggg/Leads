@@ -23,7 +23,7 @@ def _get_client():
     return _client
 
 
-def _with_timeout(query, timeout_secs: float = 45):
+def _with_timeout(query):
     return query.execute()
 
 
@@ -87,6 +87,13 @@ def filter_new(candidates: list[dict]) -> list[dict]:
     return filtered
 
 
+_SCHEMA_FIELDS = frozenset({
+    "place_id", "name", "phone", "address", "formatted_address",
+    "city", "country", "latitude", "longitude",
+    "zone", "business_type", "website", "rating", "reviews_count",
+})
+
+
 def save(businesses: list[dict]) -> None:
     """Guarda los negocios en Supabase. Ignora duplicados silenciosamente."""
     if not businesses:
@@ -94,7 +101,7 @@ def save(businesses: list[dict]) -> None:
     db = _get_client()
     payload = []
     for business in businesses:
-        item = dict(business)
+        item = {k: v for k, v in business.items() if k in _SCHEMA_FIELDS}
         item["zone"] = _normalize_text(item.get("zone", ""))
         item["business_type"] = _normalize_text(item.get("business_type", ""))
         payload.append(item)

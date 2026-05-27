@@ -4,6 +4,7 @@ Estructura: portada + listado de negocios.
 """
 import re
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 
 from reportlab.lib import colors
@@ -68,24 +69,9 @@ def _format_opening_hours(opening_hours: list) -> str:
     return "<br/>".join(lines)
 
 
-def generate_pdf(
-    businesses: list[dict],
-    business_type: str,
-    zone: str,
-    output_path: Path,
-) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    doc = SimpleDocTemplate(
-        str(output_path),
-        pagesize=A4,
-        leftMargin=1.5*cm, rightMargin=1.5*cm,
-        topMargin=2*cm,    bottomMargin=2*cm,
-    )
-
+def _build_story(businesses: list[dict], business_type: str, zone: str) -> list:
     story = []
 
-    # ── Portada ──────────────────────────────────────────────────────────────
     story.append(Spacer(1, 1*cm))
     story.append(Paragraph("Directorio Comercial de Automatización e IA", _title))
     story.append(Paragraph(f"{business_type.title()} · {zone}", _sub))
@@ -95,7 +81,6 @@ def generate_pdf(
     ))
     story.append(HRFlowable(width="100%", thickness=2, color=GOLD, spaceAfter=14))
 
-    # ── Listado de negocios ──────────────────────────────────────────────────
     story.append(Paragraph(f"Listado de {len(businesses)} negocios", _h2))
 
     COLS = [0.5*cm, 4.5*cm, 3.0*cm, 1.8*cm, 3.5*cm, 4.7*cm]
@@ -145,6 +130,34 @@ def generate_pdf(
         ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
     ]))
     story.append(tbl)
+    return story
 
-    doc.build(story)
+
+def generate_pdf_bytes(businesses: list[dict], business_type: str, zone: str) -> BytesIO:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm,
+        topMargin=2*cm,    bottomMargin=2*cm,
+    )
+    doc.build(_build_story(businesses, business_type, zone))
+    buf.seek(0)
+    return buf
+
+
+def generate_pdf(
+    businesses: list[dict],
+    business_type: str,
+    zone: str,
+    output_path: Path,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm,
+        topMargin=2*cm,    bottomMargin=2*cm,
+    )
+    doc.build(_build_story(businesses, business_type, zone))
     return output_path
