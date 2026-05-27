@@ -104,13 +104,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             all_candidates_map: dict[str, dict] = {}
             has_scrape_warning = False
-            for query in business_queries:
-                logger.info("job_id=%s scraping query=%r zone=%r", job_id, query, zone)
+            for q_idx, query in enumerate(business_queries):
+                if len(all_candidates_map) >= quantity:
+                    break
+                remaining = quantity - len(all_candidates_map)
+                logger.info("job_id=%s scraping query=%r zone=%r remaining=%d", job_id, query, zone, remaining)
+                if q_idx > 0:
+                    await _safe_send_message(
+                        chat_id, context,
+                        f"Buscando más resultados ({len(all_candidates_map)}/{quantity} encontrados)... [#{job_id}]",
+                    )
                 query_results, query_warning = await asyncio.to_thread(
                     scrape_businesses,
                     business_type=query,
                     zone=zone,
-                    requested_count=quantity,
+                    requested_count=remaining,
                     phone_prefix=phone_prefix,
                 )
                 if query_warning:
@@ -125,12 +133,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"⚠️ Solo encontré {len(candidates)} negocios nuevos de los {quantity} pedidos. "
                 "Google Maps no tiene más resultados disponibles para esta búsqueda en esta zona."
             ) if has_scrape_warning and len(candidates) < quantity else ""
-            logger.info("job_id=%s queries=%s total_candidates=%s", job_id, len(business_queries), len(candidates))
+            logger.info("job_id=%s queries_run=%s total_candidates=%s", job_id, q_idx + 1, len(candidates))
             _mark(job_id, "scrape", scrape_started)
+        except asyncio.CancelledError:
+            logger.warning("job_id=%s scraping cancelado (Railway reiniciando?)", job_id)
+            raise
         except Exception as e:
             logger.exception("Error en scraper")
             await _safe_send_message(chat_id, context, f"Error al buscar negocios en Google Maps: {e}")
             return
+
+        await _safe_send_message(chat_id, context, f"Scraping completado: {len(candidates)} candidatos encontrados. Filtrando duplicados...")
+
 
         dedupe_started = time.perf_counter()
         try:
