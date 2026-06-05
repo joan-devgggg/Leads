@@ -24,6 +24,37 @@ logger = logging.getLogger(__name__)
 
 SEARCH_KEYWORDS = ["aesthetic clinic", "beauty clinic", "cosmetic clinic", "dermatology clinic", "laser clinic", "plastic surgery clinic", "skin clinic", "medical spa"]
 
+_COUNTRY_LANG_CODE: dict[str, str] = {
+    "ES": "es", "AR": "es", "MX": "es", "CO": "es", "CL": "es", "PE": "es", "VE": "es", "UY": "es",
+    "BR": "pt", "PT": "pt",
+    "FR": "fr", "BE": "fr",
+    "DE": "de", "AT": "de", "CH": "de",
+    "IT": "it",
+    "NL": "nl",
+    "PL": "pl",
+    "RU": "ru",
+}
+
+_BEST_WORD: dict[str, str] = {
+    "es": "mejores",
+    "pt": "melhores",
+    "fr": "meilleurs",
+    "de": "beste",
+    "it": "migliori",
+    "nl": "beste",
+}
+
+
+def _apify_language(country: str) -> str:
+    return _COUNTRY_LANG_CODE.get((country or "").upper(), "en")
+
+
+def _best_prefix(languages: list[str]) -> str:
+    for lang in languages:
+        if lang in _BEST_WORD:
+            return _BEST_WORD[lang]
+    return "best"
+
 
 @dataclass(frozen=True)
 class SearchPoint:
@@ -194,7 +225,7 @@ def _keyword_score(keyword: str, country: str, languages: list[str]) -> float:
 def _build_keywords(target: dict, business_type: str) -> list[str]:
     country = (target.get("country_norm") or "").upper()
     languages = country_languages(country)
-    base = [business_type, f"best {business_type}"]
+    base = [business_type, f"{_best_prefix(languages)} {business_type}"]
     pools = [country_keywords(country)] + [language_keywords(lang) for lang in languages] + [SEARCH_KEYWORDS]
     scored: list[tuple[float, str]] = []
     seen = set(kw.strip().lower() for kw in base if kw.strip())
@@ -233,16 +264,20 @@ def _build_run_plan(business_type: str, zone_query: str, target: dict, requested
         points = plan_to_points(plan)
     points = points[:max(1, budget.max_zones)]
     keywords = _build_keywords(target, business_type)
+    # Use the clean original zone name (not the verbose Nominatim display_name) so Google
+    # Maps can parse the query correctly.  Embedding raw coordinates in the search string
+    # (e.g. "near 36.52,-6.29") confuses the actor and returns 0 results.
+    search_zone = target.get("city") or target.get("raw") or zone_query
     run_plan = [
         {
             "keyword": keyword,
             "coord": coord,
-            "search_string": f"{keyword} in {zone_query} near {coord.latitude},{coord.longitude}",
+            "search_string": f"{keyword} in {search_zone}",
         }
         for keyword, coord in product(keywords, points)
     ]
     if not run_plan:
-        run_plan = [{"keyword": keyword, "coord": None, "search_string": f"{keyword} in {zone_query}"} for keyword in keywords]
+        run_plan = [{"keyword": keyword, "coord": None, "search_string": f"{keyword} in {search_zone}"} for keyword in keywords]
     logger.info("[GEO] input=%s detected_type=%s subzones_generated=%s", zone_query, target.get("kind"), len(points))
     logger.info("[EXPANSION] subzones_generated=%s", len(points))
     return run_plan
@@ -260,6 +295,9 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
         logger.exception("[STOP] reason=geocoding_failure")
         target = {"raw": zone, "display_name": zone, "kind": "small_city", "city_norm": zone.lower(), "center": None, "bounds": [], "country_norm": "", "city_type": "medium_city"}
     zone_query = target.get("display_name") or target["raw"]
+    logger.info("[TARGET_RESOLVED] raw=%r display_name=%r city=%r kind=%r country_norm=%r city_norm=%r",
+                zone, target.get("display_name"), target.get("city"), target.get("kind"),
+                target.get("country_norm"), target.get("city_norm"))
 
     budget = SearchBudget.for_request(requested_count)
     run_plan = _build_run_plan(business_type, zone_query, target, requested_count, budget)
@@ -286,6 +324,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
         next_page_token = ""
         page = 0
         page_kept = 0
+        zone_finished = False
         while True:
             if len(results) >= requested_count or budget.should_stop():
                 break
@@ -298,7 +337,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             payload = make_json_safe({
                 "searchStringsArray": [search_string],
                 "maxCrawledPlacesPerSearch": 200,
-                "language": "en",
+                "language": _apify_language(target.get("country_norm", "")),
                 "maxImages": 0,
                 "maxReviews": 0,
                 "exportPlaceUrls": False,
@@ -307,6 +346,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             })
             if next_page_token:
                 payload["nextPageToken"] = next_page_token
+            logger.info("[APIFY_PAYLOAD] search_string=%r full_payload=%s", search_string, payload)
             try:
                 raw = _run_actor(payload)
             except Exception:
@@ -314,6 +354,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 budget.stop_reason = budget.stop_reason or "provider_failure"
                 break
             total_raw += len(raw)
+            logger.info("[APIFY_RAW] items_returned=%s first_item=%s", len(raw), str(raw[0])[:400] if raw else "EMPTY")
             logger.info("[SEARCH] keyword=%s coord=%s radius=%s page=%s results_received=%s", step.get("keyword"), coord.name if coord else "", radius, page, len(raw))
 
             before = len(raw)
@@ -343,6 +384,8 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 accepted, reason = geo_match_reason(p, target)
                 if not accepted:
                     discarded_location += 1
+                    if discarded_location <= 5:
+                        logger.info("[GEO_REJECT] reason=%r name=%r address=%r", reason, name, p.get("address") or p.get("street"))
                     continue
                 seen_keys.add(key)
                 keyword_counters.setdefault(step.get("keyword", ""), {"leads_found": 0, "duplicates": 0})["leads_found"] += 1
@@ -375,6 +418,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
 
             if not token:
                 budget.finish_zone(page_kept)
+                zone_finished = True
                 break
             next_page_token = token
             time.sleep(2)
@@ -384,7 +428,8 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             budget.stop("planner_exhausted", remaining_zones=max(0, len(run_plan) - index), pending_planners=max(0, len(planned_zones) - index), keywords_missing=max(0, len(planned_keywords) - len(keyword_counters)), requests_left=max(0, budget.max_requests - budget.requests_used))
 
         logger.info("[COVERAGE] searched_zones=%s/%s", index, len(run_plan))
-        budget.finish_zone(page_kept)
+        if not zone_finished:
+            budget.finish_zone(page_kept)
 
         if len(results) >= requested_count:
             break
