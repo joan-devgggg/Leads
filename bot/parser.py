@@ -19,6 +19,7 @@ El usuario envía un mensaje pidiendo un listado de negocios. Debes extraer:
   * Zona en otro país → usa el idioma oficial local
 - business_type: etiqueta corta en el idioma local de la zona para mostrar al usuario (ej: España → "clínicas estéticas", UK → "aesthetic clinics")
 - zone: cualquier ubicación global (ciudad, región, país, estado o área)
+- country_code: código ISO de 2 letras del país de la zona. Ejemplos: ES=España, AR=Argentina, MX=México, CO=Colombia, CL=Chile, PE=Perú, UY=Uruguay, FR=Francia, GB=Reino Unido, US=Estados Unidos, IT=Italia, PT=Portugal, DE=Alemania, AE=Emiratos Árabes, BR=Brasil, TR=Turquía, NL=Países Bajos. Si no puedes determinarlo con certeza, devuelve "".
 - phone_prefix: prefijo telefónico internacional del país (ej: "+34" para España)
 
 EXPANSIÓN DE QUERIES — ejemplos obligatorios (respeta el idioma de la zona):
@@ -45,6 +46,7 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
   "business_type": "<string>",
   "business_queries": ["<query1>", "<query2>", "..."],
   "zone": "<string>",
+  "country_code": "<ISO 2 letras o vacío>",
   "phone_prefix": "<string>",
   "cold_call_guide": [
     ["Hora ideal", "<texto>"],
@@ -110,11 +112,13 @@ def parse_request(user_message: str) -> dict:
         business_queries = [data["business_type"].lower().strip()]
 
     zone = data["zone"].strip()
+    country_code = (data.get("country_code") or "").strip().upper()
     return {
         "quantity": quantity,
         "business_type": data["business_type"].lower().strip(),
         "business_queries": [q.lower().strip() for q in business_queries if q],
         "zone": zone,
+        "country_code": country_code,
         "phone_prefix": data.get("phone_prefix", ""),
         "cold_call_guide": data.get("cold_call_guide", []),
     }

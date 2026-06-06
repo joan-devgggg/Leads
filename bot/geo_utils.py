@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -183,6 +182,40 @@ _TARGET_ALIASES = {
         "upper east side",
         "upper west side",
     },
+}
+
+_COUNTRY_NORM_TO_ISO: dict[str, str] = {
+    "spain": "ES",
+    "españa": "ES",
+    "argentina": "AR",
+    "mexico": "MX",
+    "méxico": "MX",
+    "colombia": "CO",
+    "chile": "CL",
+    "peru": "PE",
+    "perú": "PE",
+    "uruguay": "UY",
+    "venezuela": "VE",
+    "france": "FR",
+    "germany": "DE",
+    "italy": "IT",
+    "portugal": "PT",
+    "united kingdom": "GB",
+    "united states": "US",
+    "united arab emirates": "AE",
+    "brazil": "BR",
+    "turkey": "TR",
+    "netherlands": "NL",
+    "belgium": "BE",
+    "switzerland": "CH",
+    "austria": "AT",
+    "poland": "PL",
+    "russia": "RU",
+    "india": "IN",
+    "china": "CN",
+    "japan": "JP",
+    "australia": "AU",
+    "canada": "CA",
 }
 
 _STRONG_COUNTRY_REJECTIONS = {
@@ -411,6 +444,13 @@ def resolve_geo_target(zone: str) -> dict:
     if nominatim_country and not target.get("country_norm"):
         target["country_norm"] = nominatim_country
         target["country"] = address.get("country") or ""
+    # Nominatim returns address.country_code as lowercase ISO-2 (e.g. "es")
+    nominatim_iso = (address.get("country_code") or "").strip().upper()
+    if nominatim_iso and not target.get("country_code"):
+        target["country_code"] = nominatim_iso
+    # Fallback: derive from country_norm if Nominatim didn't include country_code
+    if not target.get("country_code"):
+        target["country_code"] = _COUNTRY_NORM_TO_ISO.get(target.get("country_norm", ""), "")
     target.update({
         "display_name": item.get("display_name") or raw,
         "kind": kind,
@@ -521,7 +561,9 @@ def extract_geo_fields(item: dict) -> dict:
         "locality": (item.get("locality") or item.get("city") or item.get("town") or "").strip(),
         "administrative_area": (item.get("administrativeArea") or item.get("administrative_area") or item.get("state") or item.get("region") or "").strip(),
         "neighborhood": (item.get("neighborhood") or item.get("suburb") or item.get("district") or "").strip(),
-        "country": (item.get("country") or item.get("countryName") or item.get("country_code") or item.get("countryCode") or "").strip(),
+        "country": (item.get("country") or item.get("countryName") or "").strip(),
+        # ISO-2 country code returned by Apify (e.g. "ES", "AR") — used for strict country filtering
+        "country_iso": (item.get("countryCode") or item.get("country_code") or "").strip().upper(),
         "lat": lat,
         "lng": lng,
         "has_geometry": bool(item.get("geometry") or item.get("location")),
@@ -558,6 +600,12 @@ def geo_match_reason(item: dict, target: dict) -> tuple[bool, str]:
     matched_terms = []
     score = 0
     confidence = 0.0
+
+    # Hard-reject if Apify returns an explicit ISO country code that doesn't match the target.
+    target_iso = (target.get("country_code") or "").upper()
+    result_iso = geo.get("country_iso", "")
+    if target_iso and result_iso and result_iso != target_iso:
+        return False, f"rejection_reason:wrong_country_iso|result:{result_iso}|expected:{target_iso}"
 
     # Only apply strong-country rejection when we know the target country;
     # otherwise we'd silently reject every result for cities we haven't hard-coded.

@@ -283,7 +283,7 @@ def _build_run_plan(business_type: str, zone_query: str, target: dict, requested
     return run_plan
 
 
-def scrape_businesses(business_type: str, zone: str, requested_count: int, phone_prefix: str = "") -> tuple[list[dict], str]:
+def scrape_businesses(business_type: str, zone: str, requested_count: int, phone_prefix: str = "", country_code: str = "") -> tuple[list[dict], str]:
     """
     Busca negocios en Google Maps vía Apify.
     Devuelve lista normalizada con place_id, name, phone, address, zone,
@@ -294,10 +294,14 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
     except Exception:
         logger.exception("[STOP] reason=geocoding_failure")
         target = {"raw": zone, "display_name": zone, "kind": "small_city", "city_norm": zone.lower(), "center": None, "bounds": [], "country_norm": "", "city_type": "medium_city"}
+    # Use the caller-supplied country_code if Nominatim didn't resolve one
+    if country_code and not target.get("country_code"):
+        target["country_code"] = country_code.upper()
+    effective_country_code = (target.get("country_code") or country_code or "").upper()
     zone_query = target.get("display_name") or target["raw"]
-    logger.info("[TARGET_RESOLVED] raw=%r display_name=%r city=%r kind=%r country_norm=%r city_norm=%r",
+    logger.info("[TARGET_RESOLVED] raw=%r display_name=%r city=%r kind=%r country_norm=%r city_norm=%r country_code=%r",
                 zone, target.get("display_name"), target.get("city"), target.get("kind"),
-                target.get("country_norm"), target.get("city_norm"))
+                target.get("country_norm"), target.get("city_norm"), effective_country_code)
 
     budget = SearchBudget.for_request(requested_count)
     run_plan = _build_run_plan(business_type, zone_query, target, requested_count, budget)
@@ -334,7 +338,7 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
             pages_visited += 1
             logger.info("[SEARCH] keyword=%s coord=%s radius=%s page=%s results_received=%s", step.get("keyword"), coord.name if coord else "", radius, page, 0)
             logger.info("[ZONE] searching=%s", coord.name if coord else zone_query)
-            payload = make_json_safe({
+            apify_input: dict = {
                 "searchStringsArray": [search_string],
                 "maxCrawledPlacesPerSearch": 200,
                 "language": _apify_language(target.get("country_norm", "")),
@@ -343,7 +347,10 @@ def scrape_businesses(business_type: str, zone: str, requested_count: int, phone
                 "exportPlaceUrls": False,
                 "additionalInfo": False,
                 "includeWebResults": False,
-            })
+            }
+            if effective_country_code:
+                apify_input["countryCode"] = effective_country_code
+            payload = make_json_safe(apify_input)
             if next_page_token:
                 payload["nextPageToken"] = next_page_token
             logger.info("[APIFY_PAYLOAD] search_string=%r full_payload=%s", search_string, payload)

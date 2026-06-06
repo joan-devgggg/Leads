@@ -94,7 +94,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         business_type = req["business_type"]
         business_queries = req.get("business_queries") or [business_type]
         zone = req["zone"]
+        country_code = req.get("country_code", "")
         phone_prefix = req["phone_prefix"]
+
+        if not country_code:
+            await _safe_send_message(
+                chat_id, context,
+                f"No pude determinar el país de '{zone}'.\n"
+                "Por favor, especifica el país en tu mensaje. Ejemplo:\n"
+                "• 'Dame 30 administradores de fincas en Madrid, España'\n"
+                "• 'Dame 20 dentistas en Buenos Aires, Argentina'"
+            )
+            return
+
         try:
             await _safe_send_message(chat_id, context, f"Buscando {quantity} {business_type} en {zone}... [#{job_id}]")
         except Exception:
@@ -120,6 +132,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     zone=zone,
                     requested_count=remaining,
                     phone_prefix=phone_prefix,
+                    country_code=country_code,
                 )
                 if query_warning:
                     has_scrape_warning = True
